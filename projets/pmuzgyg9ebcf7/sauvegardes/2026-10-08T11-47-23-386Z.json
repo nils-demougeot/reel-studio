@@ -1,0 +1,31 @@
+{
+ "version": 1,
+ "id": "pmuzgyg9ebcf7",
+ "name": "test",
+ "createdAt": 1791459877593,
+ "updatedAt": 1791460043380,
+ "settings": {
+  "width": 1080,
+  "height": 1920,
+  "background": "#000000"
+ },
+ "rhythm": {
+  "bpm": 130.1,
+  "offset": 0
+ },
+ "defaults": {
+  "beats": 1,
+  "videoBeats": 4,
+  "fit": "cover",
+  "motion": "zoomIn"
+ },
+ "media": {},
+ "clips": [],
+ "overlays": [],
+ "music": null,
+ "export": {
+  "fps": 30,
+  "quality": "high",
+  "fadeOut": 1.5
+ }
+}
