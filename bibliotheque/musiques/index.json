@@ -2,7 +2,8 @@
  "Firestone.mp3": {
   "bpm": 120,
   "offset": 0.2925,
-  "duration": 275.48154166666666
+  "duration": 275.48154166666666,
+  "highlight": 254.29250000000002
  },
  "Summer.mp3": {
   "bpm": 128,
