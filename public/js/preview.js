@@ -1,11 +1,11 @@
 // Aperçu 9:16 : lecture synchronisée avec la musique et manipulation directe
-// des textes / logos (déplacer, redimensionner) et du cadrage des photos.
+// des textes / stickers (déplacer, redimensionner) et du cadrage des photos.
 
 import { store, on, emit, setTime, setPlaying, select, commit } from './store.js';
 import { drawFrame } from './render.js';
 import { clipIndexAt, FRAME_W, FRAME_H, FIT_MODES, musicSegments } from './model.js';
 import { PreviewSources } from './media.js';
-import { player, addText, addLogo, addColorCard, updateAllClips } from './actions.js';
+import { player, addText, addSticker, addColorCard, updateAllClips } from './actions.js';
 import { h, icon, clamp, fmtTime, rafThrottle } from './util.js';
 
 const SNAP = 0.012;
@@ -76,7 +76,7 @@ export function createPreview() {
 
   const toolbar = h('div', { class: 'preview-toolbar' },
     h('button', { class: 'btn btn-chip chip-text', onclick: () => addText('title'), title: 'Ajouter un texte (T)' }, icon('text', 16), 'Texte'),
-    h('button', { class: 'btn btn-chip chip-logo', onclick: addLogo, title: 'Ajouter un logo' }, icon('image', 16), 'Logo'),
+    h('button', { class: 'btn btn-chip chip-logo', onclick: addSticker, title: 'Ajouter un sticker : logo, image, GIF animé ou vidéo' }, icon('sticker', 16), 'Sticker'),
     h('button', { class: 'btn btn-chip chip-card', onclick: addColorCard, title: 'Ajouter un carton de couleur' }, icon('card', 16), 'Carton'),
     h('div', { class: 'spacer' }),
     fitSwitch,
@@ -117,7 +117,9 @@ export function createPreview() {
     if (!p || !W) return;
     sources.setProject(p);
     const still = !store.playing && store.sel.type === 'overlay' ? store.sel.ids[0] : null;
+    sources.beginFrame();
     boxes = drawFrame(ctx, W, H, p, store.tl, store.time, sources, { still });
+    sources.endFrame();
     const i = clipIndexAt(store.tl, store.time);
     sources.prefetch(Math.max(0, i), store.playing ? 16 : 6);
     if (i >= 0) sources.preroll(p.clips[i + 1]);
@@ -135,7 +137,7 @@ export function createPreview() {
     if (!ov) { selBox.style.display = 'none'; return; }
     const s = k();
     Object.assign(selBox.style, { display: '', left: `${ov.x * s}px`, top: `${ov.y * s}px`, width: `${ov.w * s}px`, height: `${ov.h * s}px` });
-    selBox.classList.toggle('is-logo', store.project.overlays.find((o) => o.id === ov.id)?.type === 'logo');
+    selBox.classList.toggle('is-logo', store.project.overlays.find((o) => o.id === ov.id)?.type === 'sticker');
   }
 
   // ---------- interactions ----------

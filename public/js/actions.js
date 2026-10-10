@@ -3,9 +3,10 @@
 import * as api from './api.js';
 import { store, commit, select, selectedClips, emit, setTime } from './store.js';
 import {
-  newClip, newTextOverlay, newLogoOverlay, snapToBeat, beatLength, clipIndexAt, musicSegments, songTimeAt,
+  newClip, newTextOverlay, newStickerOverlay, snapToBeat, beatLength, clipIndexAt, musicSegments, songTimeAt,
 } from './model.js';
-import { importFiles, uploadLogo } from './media.js';
+import { importFiles } from './media.js';
+import { importSticker, STICKER_ACCEPT } from './stickers.js';
 import { decodeAudio, computePeaks, detectTempo, findBestPassage, Player } from './audio.js';
 import { applyTemplate, captureTemplate } from './templates.js';
 import { imageSize } from './library.js';
@@ -361,28 +362,64 @@ export function addText(preset = 'title') {
   emit('focus-text');
 }
 
-export async function addLogo() {
-  const [file] = await pickFiles({ accept: 'image/png,image/svg+xml,image/webp,image/jpeg', multiple: false });
+// Sticker : logo, image, GIF / WebP animé ou vidéo, ajouté au premier plan à la tête de lecture.
+export async function addSticker() {
+  const [file] = await pickFiles({ accept: STICKER_ACCEPT, multiple: false });
   if (!file) return;
+  const t = toast('Préparation du sticker…', { timeout: 0 });
   try {
-    const { file: name, w, h } = await uploadLogo(store.project.id, file);
-    const ov = newLogoOverlay(store.project, name, w, h, store.tl);
+    const info = await importSticker(store.project.id, file);
+    const ov = newStickerOverlay(store.project, info, store.tl);
+    const total = store.tl.total;
+    if (store.time > 0.05 && store.time < total) {
+      ov.start = store.time;
+      ov.end = Math.min(total, store.time + (info.duration || ov.end - ov.start));
+      if (ov.end - ov.start < 0.3) ov.end = Math.min(total || ov.start + 2, ov.start + 2);
+    } else if (info.duration) {
+      ov.end = Math.min(total || info.duration, info.duration);
+    }
+    if (ov.end - ov.start < 0.3) ov.end = ov.start + 2;
     commit((p) => { p.overlays.push(ov); });
     select('overlay', [ov.id]);
-    if (store.time >= ov.end) setTime(0.4);
+    if (store.time < ov.start || store.time >= ov.end) setTime(ov.start + 0.1);
+    t.close();
   } catch (err) {
     console.error(err);
-    toast('Image de logo illisible.', { type: 'warn' });
+    t.close();
+    toast(`Ce fichier n’a pas pu être utilisé comme sticker : ${file.name}`, { type: 'warn', timeout: 6000 });
   }
 }
 
-export async function replaceLogo(ovId) {
-  const [file] = await pickFiles({ accept: 'image/*', multiple: false });
+export async function replaceSticker(ovId) {
+  const [file] = await pickFiles({ accept: STICKER_ACCEPT, multiple: false });
   if (!file) return;
-  const { file: name, w, h } = await uploadLogo(store.project.id, file);
+  const t = toast('Préparation du sticker…', { timeout: 0 });
+  try {
+    const info = await importSticker(store.project.id, file);
+    commit((p) => {
+      const ov = p.overlays.find((o) => o.id === ovId);
+      if (ov) Object.assign(ov, { file: info.file, kind: info.kind, iw: info.iw, ih: info.ih, duration: info.duration || 0 });
+    });
+  } catch (err) {
+    console.error(err);
+    toast(`Fichier inutilisable : ${file.name}`, { type: 'warn' });
+  } finally {
+    t.close();
+  }
+}
+
+// ---------- calques ----------
+// L'ordre du tableau `overlays` est l'ordre de superposition : le dernier est au premier plan.
+
+export function moveLayer(id, where) {
   commit((p) => {
-    const ov = p.overlays.find((o) => o.id === ovId);
-    if (ov) Object.assign(ov, { file: name, iw: w, ih: h });
+    const i = p.overlays.findIndex((o) => o.id === id);
+    if (i < 0) return false;
+    const n = p.overlays.length;
+    const to = { top: n - 1, up: Math.min(n - 1, i + 1), down: Math.max(0, i - 1), bottom: 0 }[where] ?? where;
+    if (to === i) return false;
+    const [ov] = p.overlays.splice(i, 1);
+    p.overlays.splice(to, 0, ov);
   });
 }
 
@@ -479,7 +516,7 @@ export async function saveAsTemplate(name, description) {
       name: p.music.name.replace(/\.[^.]+$/, ''), bpm: p.rhythm.bpm, offset: p.rhythm.offset, duration: p.music.duration,
     }).catch(() => {});
   }
-  const logoOv = p.overlays.find((o) => o.type === 'logo');
+  const logoOv = p.overlays.find((o) => o.type === 'sticker' && o.kind === 'image');
   let logoFiles = [];
   if (logoOv) {
     const file = await api.copyToLibrary(p.id, 'logos', logoOv.file);

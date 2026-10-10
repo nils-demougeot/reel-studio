@@ -2,6 +2,7 @@
 
 import * as api from './api.js';
 import { naturalCompare, uid, progressToast, toast } from './util.js';
+import { decodeAnimated, frameAt, stickerTime, disposeAnimated } from './stickers.js';
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|bmp)$/i;
 const VIDEO_EXT = /\.(mp4|m4v|mov|webm)$/i;
@@ -173,14 +174,6 @@ export async function importFiles(projectId, files, { onMedia, onAudio }) {
   if (!visual.length && !audio.length && !unsupported) toast('Aucune photo, vidéo ou musique trouvée.', { type: 'warn' });
 }
 
-export async function uploadLogo(projectId, file) {
-  const bmp = await createImageBitmap(file);
-  const name = await api.uploadFile(projectId, 'media', `logo-${file.name}`, file, { unique: true });
-  const out = { file: name, w: bmp.width, h: bmp.height };
-  bmp.close();
-  return out;
-}
-
 // ---------- sources pour l'aperçu ----------
 
 // Garde en mémoire un nombre limité d'images décodées autour de la tête de lecture.
@@ -191,7 +184,10 @@ export class PreviewSources {
     this.bitmaps = new Map(); // mediaId -> ImageBitmap | 'loading'
     this.thumbs = new Map(); // mediaId -> HTMLImageElement
     this.videos = new Map(); // mediaId -> HTMLVideoElement
-    this.logos = new Map(); // fichier -> HTMLImageElement
+    this.stickerImages = new Map(); // fichier -> HTMLImageElement
+    this.stickerVideos = new Map(); // fichier -> HTMLVideoElement
+    this.anims = new Map(); // fichier -> image animée décodée | 'loading' | 'static'
+    this.usedStickerVideos = new Set();
     this.order = [];
     this.loading = 0;
     this.queue = [];
@@ -209,7 +205,10 @@ export class PreviewSources {
   reset() {
     for (const b of this.bitmaps.values()) if (b instanceof ImageBitmap) b.close();
     for (const v of this.videos.values()) { v.pause(); v.removeAttribute('src'); v.load(); }
-    this.bitmaps.clear(); this.thumbs.clear(); this.videos.clear(); this.logos.clear();
+    for (const v of this.stickerVideos.values()) { v.pause(); v.removeAttribute('src'); v.load(); }
+    for (const a of this.anims.values()) if (typeof a === 'object') disposeAnimated(a);
+    this.bitmaps.clear(); this.thumbs.clear(); this.videos.clear();
+    this.stickerImages.clear(); this.stickerVideos.clear(); this.anims.clear();
     this.order = []; this.queue = [];
   }
 
@@ -305,6 +304,7 @@ export class PreviewSources {
   setPlaying(playing) {
     this.playing = playing;
     if (!playing && this.activeVideo) this.activeVideo.pause();
+    if (!playing) for (const v of this.stickerVideos.values()) v.pause();
   }
 
   // Interface utilisée par le moteur de rendu.
@@ -322,15 +322,62 @@ export class PreviewSources {
     return this.thumb(media);
   }
 
-  logo(ov) {
-    let img = this.logos.get(ov.file);
+  stickerImage(ov) {
+    let img = this.stickerImages.get(ov.file);
     if (!img) {
       img = new Image();
       img.onload = () => this.onReady();
       img.src = api.fileUrl(this.projectId, 'media', ov.file);
-      this.logos.set(ov.file, img);
+      this.stickerImages.set(ov.file, img);
     }
     return img.complete && img.naturalWidth ? { img, w: img.naturalWidth, h: img.naturalHeight } : null;
+  }
+
+  // Interface utilisée par le moteur de rendu : image du sticker `local` s après son apparition.
+  sticker(ov, local) {
+    if (ov.kind === 'video') {
+      let v = this.stickerVideos.get(ov.file);
+      if (!v) {
+        v = document.createElement('video');
+        v.muted = true;
+        v.preload = 'auto';
+        v.playsInline = true;
+        v.addEventListener('seeked', () => this.onReady());
+        v.addEventListener('loadeddata', () => this.onReady());
+        v.src = api.fileUrl(this.projectId, 'media', ov.file);
+        this.stickerVideos.set(ov.file, v);
+      }
+      this.usedStickerVideos.add(v);
+      const target = stickerTime(ov, local);
+      if (this.playing) {
+        if (v.paused) { v.currentTime = target; v.play().catch(() => {}); }
+        else if (Math.abs(v.currentTime - target) > 0.25) v.currentTime = target;
+      } else {
+        if (!v.paused) v.pause();
+        if (Math.abs(v.currentTime - target) > 0.02 && !v.seeking) v.currentTime = target;
+      }
+      return v.readyState >= 2 ? { img: v, w: v.videoWidth, h: v.videoHeight } : null;
+    }
+    if (ov.kind === 'anim') {
+      const a = this.anims.get(ov.file);
+      if (!a) {
+        this.anims.set(ov.file, 'loading');
+        fetch(api.fileUrl(this.projectId, 'media', ov.file))
+          .then((r) => r.blob())
+          .then((b) => decodeAnimated(b, b.type))
+          .then((anim) => { this.anims.set(ov.file, anim || 'static'); this.onReady(); })
+          .catch(() => this.anims.set(ov.file, 'static'));
+      }
+      if (a && typeof a === 'object') return { img: frameAt(a, stickerTime(ov, local)), w: a.w, h: a.h };
+    }
+    return this.stickerImage(ov);
+  }
+
+  beginFrame() { this.usedStickerVideos = new Set(); }
+
+  // Met en pause les vidéos de stickers qui ne sont plus à l'écran.
+  endFrame() {
+    for (const v of this.stickerVideos.values()) if (!this.usedStickerVideos.has(v) && !v.paused) v.pause();
   }
 
   // Vidéo à précharger avant son tour, pour éviter un temps de chargement à la coupe.
@@ -352,14 +399,41 @@ export class ExportSources {
     this.images = new Map(); // mediaId -> Promise<ImageBitmap>
     this.ready = new Map(); // mediaId -> ImageBitmap
     this.videos = new Map();
-    this.logos = new Map();
+    this.stickers = new Map(); // fichier -> { img } | { anim } | { video }
   }
 
   async init() {
     for (const ov of this.project.overlays) {
-      if (ov.type !== 'logo' || this.logos.has(ov.file)) continue;
-      const blob = await (await fetch(api.fileUrl(this.project.id, 'media', ov.file))).blob();
-      this.logos.set(ov.file, await createImageBitmap(blob));
+      if (ov.type !== 'sticker' || this.stickers.has(ov.file)) continue;
+      const url = api.fileUrl(this.project.id, 'media', ov.file);
+      if (ov.kind === 'video') {
+        const v = document.createElement('video');
+        v.muted = true;
+        v.preload = 'auto';
+        v.src = url;
+        await new Promise((res) => { v.onloadeddata = res; v.onerror = res; });
+        this.stickers.set(ov.file, { video: v });
+        continue;
+      }
+      if (ov.kind === 'anim') {
+        const blob = await (await fetch(url)).blob();
+        const anim = await decodeAnimated(blob, blob.type);
+        if (anim) { this.stickers.set(ov.file, { anim }); continue; }
+      }
+      // Élément <img> : fonctionne aussi pour le SVG, dessiné net à n'importe quelle taille.
+      const img = new Image();
+      img.src = url;
+      await img.decode().catch(() => {});
+      this.stickers.set(ov.file, { img });
+    }
+  }
+
+  // Positionne les stickers vidéo visibles à l'instant t.
+  async prepareStickers(t) {
+    for (const ov of this.project.overlays) {
+      if (ov.type !== 'sticker' || ov.kind !== 'video' || t < ov.start || t >= ov.end) continue;
+      const v = this.stickers.get(ov.file)?.video;
+      if (v) await this.seek(v, stickerTime(ov, t - ov.start));
     }
   }
 
@@ -439,14 +513,20 @@ export class ExportSources {
     return b ? { img: b, w: b.width, h: b.height } : null;
   }
 
-  logo(ov) {
-    const b = this.logos.get(ov.file);
-    return b ? { img: b, w: b.width, h: b.height } : null;
+  sticker(ov, local) {
+    const s = this.stickers.get(ov.file);
+    if (!s) return null;
+    if (s.video) return s.video.readyState >= 2 ? { img: s.video, w: s.video.videoWidth, h: s.video.videoHeight } : null;
+    if (s.anim) return { img: frameAt(s.anim, stickerTime(ov, local)), w: s.anim.w, h: s.anim.h };
+    return s.img.naturalWidth ? { img: s.img, w: s.img.naturalWidth, h: s.img.naturalHeight } : null;
   }
 
   dispose() {
     for (const b of this.ready.values()) b.close();
-    for (const b of this.logos.values()) b.close();
+    for (const s of this.stickers.values()) {
+      if (s.anim) disposeAnimated(s.anim);
+      if (s.video) { s.video.removeAttribute('src'); s.video.load(); }
+    }
     for (const v of this.videos.values()) { v.removeAttribute('src'); v.load(); }
   }
 }

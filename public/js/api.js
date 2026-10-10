@@ -25,6 +25,7 @@ export async function uploadFile(projectId, kind, name, blob, { unique = false }
 }
 
 export const transcode = (projectId, file) => request('POST', `/api/projects/${projectId}/transcode`, { file });
+export const convertSticker = (projectId, file, target) => request('POST', `/api/projects/${projectId}/convert-sticker`, { file, target });
 export const reveal = (projectId, file, kind = 'exports') => request('POST', `/api/projects/${projectId}/reveal`, { file, kind });
 
 export const startExport = (projectId, opts) => request('POST', `/api/projects/${projectId}/exports`, opts);

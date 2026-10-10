@@ -16,10 +16,20 @@ Navigateur conseillé : Chrome ou Edge.
 3. Réglez la durée de toutes les photos dans *Projet → Rythme*, ou sélectionnez des vignettes dans la timeline
    (clic, Maj+clic, Ctrl+clic) pour régler leur durée à part (touches `1` à `5`, ou glisser le bord droit d'une vignette).
 4. Glissez les vignettes pour changer l'ordre. *Mélanger*, *Inverser* et *Trier* agissent sur la sélection (ou sur tout).
-5. Ajoutez un **Texte** ou un **Logo** avec les boutons au-dessus de l'aperçu, déplacez-les directement dans l'aperçu.
+5. Ajoutez un **Texte** ou un **Sticker** avec les boutons au-dessus de l'aperçu, déplacez-les directement dans l'aperçu.
 6. **Exporter** : MP4 H.264 1080×1920, avec la musique en AAC.
 
 Tout est enregistré automatiquement (indicateur « Enregistré » en haut). `Ctrl+Z` / `Ctrl+Y` pour annuler / rétablir.
+
+### Stickers et calques
+
+Un **sticker** est une image, une image animée ou une vidéo posée par-dessus le montage (un logo est un sticker).
+Formats acceptés : PNG, JPG, WebP, AVIF, SVG, BMP, GIF / WebP / APNG animés, MP4, MOV, WebM, et via conversion
+automatique ProRes, AVI, MKV, WMV, MTS, TIFF, JPEG 2000… La transparence est conservée (PNG, GIF, WebM, ProRes 4444).
+Les stickers animés ou vidéo tournent en boucle (ou une seule fois) ; le son des vidéos n'est pas utilisé.
+
+La piste **Calques** de la timeline contient textes et stickers, un par ligne : **la ligne du haut est au premier plan**.
+Glissez une barre vers le haut ou le bas pour changer l'ordre, ou utilisez les boutons du panneau (touches `[` et `]`).
 
 ### Couper un passage (photo, vidéo ou musique)
 
@@ -93,6 +103,7 @@ Aucune étape de compilation : modifiez un fichier, rechargez la page.
 | `public/js/templates.js` | Modèles fournis, application d'un modèle, capture d'un montage en modèle |
 | `public/js/template-ui.js` | Cartes et fenêtre de configuration des modèles |
 | `public/js/library.js` | Bibliothèque musicale et logos partagés |
+| `public/js/stickers.js` | Import des stickers (détection des images animées, conversion) et décodage image par image |
 
 Les durées sont stockées en temps (beats) : changer le BPM recale tout le montage sur la musique.
 

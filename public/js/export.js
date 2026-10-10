@@ -159,6 +159,7 @@ async function runExport({ quality, fps, name, audio }) {
       const t = i / fps;
       const idx = clipIndexAt(tl, t);
       if (idx >= 0) await src.prepare(idx, t - tl.starts[idx]);
+      await src.prepareStickers(t);
       drawFrame(ctx, W, H, p, tl, t, src);
       queue.push(pool.encode(await createImageBitmap(canvas), 0.95));
       if (queue.length >= 12) await send(8);

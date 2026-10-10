@@ -1,4 +1,4 @@
-// Panneau de droite : réglages du projet, des médias sélectionnés ou du texte / logo sélectionné.
+// Panneau de droite : réglages du projet, des médias sélectionnés ou du calque (texte / sticker) sélectionné.
 
 import { store, on, commit, selectedClips, selectedOverlay, setTime } from './store.js';
 import {
@@ -7,7 +7,7 @@ import {
 } from './model.js';
 import {
   music, setBpm, redetectTempo, shiftMusic, pickMusic, removeMusic, setBeatsForAll, setBeatsForSelection,
-  updateSelectedClips, updateAllClips, duplicateSelection, deleteSelection, updateOverlay, replaceLogo,
+  updateSelectedClips, updateAllClips, duplicateSelection, deleteSelection, updateOverlay, replaceSticker, moveLayer,
   useLibraryMusic, autoPassage, splitAtPlayhead, deleteMusicSegments, restoreFullMusic,
 } from './actions.js';
 import { openMusicLibrary } from './library.js';
@@ -96,7 +96,7 @@ export function createInspector() {
     const clips = selectedClips();
     if (store.sel.type === 'music' && p.music) content = musicCutPanel(p);
     else if (ov?.type === 'text') content = textPanel(p, ov);
-    else if (ov?.type === 'logo') content = logoPanel(p, ov);
+    else if (ov?.type === 'sticker') content = stickerPanel(p, ov);
     else if (clips.length) content = clipsPanel(p, clips);
     else content = projectPanel(p);
     body.replaceChildren(...[content].flat());
@@ -191,6 +191,7 @@ export function createInspector() {
         ['Espace', 'Lecture / pause'], ['Clic, Maj+clic, Ctrl+clic', 'Sélectionner'], ['Ctrl+A', 'Tout sélectionner'],
         ['Glisser une vignette', 'Changer l\'ordre'], ['Glisser le bord d\'une vignette', 'Changer la durée'],
         ['1 à 5', 'Durée ¼ ½ 1 2 4 temps'], ['Alt+← / →', 'Déplacer la sélection'],
+        ['[ / ]', 'Calque : descendre / monter'], ['S', 'Couper à la tête de lecture'],
         ['Ctrl+D', 'Dupliquer'], ['Suppr', 'Supprimer'], ['Ctrl+Z / Ctrl+Y', 'Annuler / rétablir'], ['T', 'Ajouter un texte'],
       ].map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
 
@@ -278,7 +279,7 @@ export function createInspector() {
     return parts;
   }
 
-  // ----- timing commun texte / logo -----
+  // ----- timing commun texte / sticker -----
   function timingSection(p, ov) {
     const set = (start, end) => updateOverlay(ov.id, { start: Math.max(0, start), end: Math.max(start + 0.1, end) });
     const total = store.tl.total || 2;
@@ -342,6 +343,7 @@ export function createInspector() {
       section('Position',
         positionChips(ov, [['Haut', 0.5, 0.18], ['Centre', 0.5, 0.5], ['Bas', 0.5, 0.74]]),
         hint('Glissez le texte dans l\'aperçu, et ses coins pour l\'agrandir.')),
+      layerSection(p, ov),
       timingSection(p, ov),
       h('div', { class: 'btn-row insp-actions' },
         h('button', { class: 'btn btn-ghost btn-sm', onclick: duplicateSelection }, icon('copy', 15), 'Dupliquer'),
@@ -349,34 +351,62 @@ export function createInspector() {
     ];
   }
 
-  // ----- logo -----
-  function logoPanel(p, ov) {
+  // ----- ordre des calques (commun texte / sticker) -----
+  function layerSection(p, ov) {
+    const i = p.overlays.findIndex((o) => o.id === ov.id);
+    const n = p.overlays.length;
+    return section('Calque',
+      h('div', { class: 'btn-row layer-row' },
+        h('button', { class: 'btn btn-ghost btn-sm', disabled: i === n - 1, onclick: () => moveLayer(ov.id, 'top'), title: 'Tout en haut (Maj + ])' }, icon('top', 15), 'Premier plan'),
+        h('button', { class: 'btn btn-ghost btn-sm', disabled: i === n - 1, onclick: () => moveLayer(ov.id, 'up'), title: 'Monter d’un cran ( ] )' }, icon('up', 15), 'Monter'),
+        h('button', { class: 'btn btn-ghost btn-sm', disabled: i === 0, onclick: () => moveLayer(ov.id, 'down'), title: 'Descendre d’un cran ( [ )' }, icon('down', 15), 'Descendre'),
+        h('button', { class: 'btn btn-ghost btn-sm', disabled: i === 0, onclick: () => moveLayer(ov.id, 'bottom'), title: 'Tout en bas (Maj + [)' }, icon('bottom', 15), 'Arrière-plan')),
+      hint(`Calque ${n - i} sur ${n} en partant du haut. Dans la timeline, la ligne du haut est au premier plan ; glissez une barre vers le haut ou le bas pour changer l’ordre.`));
+  }
+
+  // ----- sticker -----
+  function stickerPanel(p, ov) {
+    const url = fileUrl(p.id, 'media', ov.file);
+    const kindLabel = { video: 'Sticker vidéo', anim: 'Sticker animé' }[ov.kind] || 'Sticker';
+    const media = ov.kind === 'video'
+      ? h('video', { src: url, muted: true, autoplay: true, loop: true, playsInline: true })
+      : h('img', { src: url });
     return [
-      h('div', { class: 'insp-title' }, h('span', { class: 'dot dot-logo' }), 'Logo'),
+      h('div', { class: 'insp-title' }, h('span', { class: 'dot dot-logo' }), kindLabel),
       section(null,
-        h('div', { class: 'logo-preview' }, h('img', { src: fileUrl(p.id, 'media', ov.file) })),
-        h('div', { class: 'btn-row' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: () => replaceLogo(ov.id) }, 'Changer l\'image'))),
+        h('div', { class: 'logo-preview' }, media),
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: () => replaceSticker(ov.id) }, 'Changer le fichier'))),
       section('Apparence',
         row('Taille', slider({
-          min: 0.05, max: 1, step: 0.005, value: ov.w, format: (v) => `${Math.round(v * 100)} %`,
+          min: 0.05, max: 1.5, step: 0.005, value: ov.w, format: (v) => `${Math.round(v * 100)} %`,
           onInput: (v) => updateOverlay(ov.id, { w: v }, `w-${ov.id}`),
         })),
         row('Opacité', slider({
           min: 0.1, max: 1, step: 0.01, value: ov.opacity ?? 1, format: (v) => `${Math.round(v * 100)} %`,
           onInput: (v) => updateOverlay(ov.id, { opacity: v }, `op-${ov.id}`),
-        }))),
+        })),
+        ov.kind === 'video' || ov.kind === 'anim' ? row('Lecture', segmented(
+          [{ id: true, label: 'En boucle' }, { id: false, label: 'Une fois' }], ov.loop !== false,
+          (v) => updateOverlay(ov.id, { loop: v }), { small: true })) : null,
+        ov.duration ? hint(`Durée du fichier : ${secs(ov.duration)}. ${ov.kind === 'video' ? 'Le son de la vidéo n’est pas utilisé.' : ''}`) : null,
+        ov.duration ? h('div', { class: 'btn-row' }, h('button', {
+          class: 'btn btn-ghost btn-sm',
+          onclick: () => updateOverlay(ov.id, { end: Math.min(store.tl.total || ov.start + ov.duration, ov.start + ov.duration) }),
+        }, 'Ajuster l’affichage à la durée du fichier')) : null),
       section('Position',
         positionChips(ov, [
           ['Haut', 0.5, 0.12], ['Centre', 0.5, 0.5], ['Bas', 0.5, 0.8],
           ['Haut gauche', 0.16, 0.08], ['Haut droite', 0.84, 0.08],
         ]),
-        hint('Glissez le logo dans l\'aperçu, et ses coins pour le redimensionner.')),
+        hint('Glissez le sticker dans l’aperçu, et ses coins pour le redimensionner.')),
+      layerSection(p, ov),
       timingSection(p, ov),
       h('div', { class: 'btn-row insp-actions' },
         h('button', { class: 'btn btn-ghost btn-sm', onclick: duplicateSelection }, icon('copy', 15), 'Dupliquer'),
         h('button', { class: 'btn btn-ghost btn-sm btn-danger-text', onclick: deleteSelection }, icon('trash', 15), 'Supprimer')),
     ];
   }
+
 
   const schedule = rafThrottle(render);
   on('project', (d) => { if (d?.source !== 'inspector') schedule(); });

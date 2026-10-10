@@ -4,7 +4,7 @@
 // Les positions des textes / logos sont exprimées en temps musicaux, par rapport
 // au début ou à la fin de la vidéo, pour s'adapter au nombre de photos.
 
-import { beatLength, computeTimeline, newClip, newTextOverlay, newLogoOverlay, snapToBeat, TEXT_PRESETS } from './model.js';
+import { beatLength, computeTimeline, newClip, newTextOverlay, newStickerOverlay, snapToBeat, TEXT_PRESETS } from './model.js';
 import { uid } from './util.js';
 
 export const DURATION_CHOICES = [
@@ -177,8 +177,10 @@ function instantiateOverlay(p, tl, entry, opts) {
   const { type, preset, ...data } = structuredClone(entry.data);
   let ov;
   if (type === 'logo') {
+    // Emplacement « logo » du modèle : sticker image avec le logo choisi.
     if (!opts.logo) return null;
-    ov = { ...newLogoOverlay(p, opts.logo.file, opts.logo.iw, opts.logo.ih, tl), ...data, file: opts.logo.file, iw: opts.logo.iw, ih: opts.logo.ih };
+    const info = { file: opts.logo.file, kind: 'image', iw: opts.logo.iw, ih: opts.logo.ih };
+    ov = { ...newStickerOverlay(p, info, tl), ...data, ...info };
   } else {
     ov = { ...newTextOverlay(p, TEXT_PRESETS[preset] ? preset : 'title', tl), ...data };
     ov.text = String(ov.text || '')
@@ -197,7 +199,7 @@ function instantiateOverlay(p, tl, entry, opts) {
   start = Math.max(0, snap(start));
   end = Math.min(total, snap(end));
   if (end - start < 0.2) return null;
-  return { ...ov, id: uid(type === 'logo' ? 'l' : 't'), start, end };
+  return { ...ov, id: uid(type === 'logo' ? 's' : 't'), start, end };
 }
 
 // ---------- capture d'un montage existant ----------
@@ -225,11 +227,16 @@ export function captureTemplate(p, { name, description, musicFile, logoFiles }) 
   const titleOv = texts[0];
   const subOv = texts.find((o) => o !== titleOv && Math.abs(o.start - (titleOv?.start ?? -1)) < 0.05);
 
-  const overlays = p.overlays.map((o) => {
+  // Le premier sticker image devient l'emplacement « logo » ; les autres stickers ne sont pas repris.
+  const logoOv = p.overlays.find((o) => o.type === 'sticker' && o.kind === 'image');
+  const overlays = p.overlays.filter((o) => o.type === 'text' || o === logoOv || (o.type === 'sticker' && o.file === logoOv?.file)).map((o) => {
     const { id, start, end, ...data } = structuredClone(o);
     if (o === titleOv) data.text = '{titre}';
     if (o === subOv) data.text = '{sous-titre}';
-    if (o.type === 'logo') { delete data.file; delete data.iw; delete data.ih; }
+    if (o.type === 'sticker') {
+      for (const k of ['file', 'iw', 'ih', 'kind', 'duration', 'loop']) delete data[k];
+      data.type = 'logo';
+    }
     const sB = start / L, eB = end / L;
     if (start < 0.05 && end > tl.total - 0.05) return { anchor: 'all', offset: 0, len: 0, data };
     if (start <= tl.total - end) return { anchor: 'start', offset: sB, len: eB - sB, data };

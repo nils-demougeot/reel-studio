@@ -6,7 +6,7 @@ import { clamp } from './util.js';
 
 const MOTION_AMOUNT = 0.07;
 
-// `src` fournit les images : src.clip(clip, localTime) et src.logo(overlay),
+// `src` fournit les images : src.clip(clip, localTime) et src.sticker(overlay, localTime),
 // qui renvoient { img, w, h } ou null si rien n'est prêt.
 // `still` : identifiant d'un calque à afficher sans animation (calque en cours d'édition).
 export function drawFrame(ctx, W, H, project, tl, t, src, { still = null } = {}) {
@@ -19,7 +19,7 @@ export function drawFrame(ctx, W, H, project, tl, t, src, { still = null } = {})
   for (const ov of project.overlays) {
     if (t < ov.start || t >= ov.end) continue;
     const tt = ov.id === still ? Math.min(ov.start + 1, (ov.start + ov.end) / 2) : t;
-    const box = ov.type === 'text' ? drawText(ctx, W, H, ov, tt) : drawLogo(ctx, W, H, ov, tt, src);
+    const box = ov.type === 'text' ? drawText(ctx, W, H, ov, tt) : drawSticker(ctx, W, H, ov, tt, src);
     if (box) boxes.push(box);
   }
   ctx.restore();
@@ -154,10 +154,10 @@ function drawText(ctx, W, H, ov, t) {
   return { id: ov.id, x: cx - bw / 2, y: cy - bh / 2, w: bw, h: bh };
 }
 
-// ---------- logo ----------
+// ---------- sticker (image, image animée, vidéo) ----------
 
-function drawLogo(ctx, W, H, ov, t, src) {
-  const s = src.logo(ov);
+function drawSticker(ctx, W, H, ov, t, src) {
+  const s = src.sticker(ov, t - ov.start);
   const dw = ov.w * W;
   const dh = dw * (ov.ih / ov.iw);
   const cx = ov.x * W, cy = ov.y * H;

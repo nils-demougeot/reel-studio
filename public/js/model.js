@@ -71,6 +71,10 @@ export function normalizeProject(p) {
   p.media = p.media || {};
   p.clips = p.clips || [];
   p.overlays = p.overlays || [];
+  // Les anciens « logos » sont des stickers image.
+  for (const ov of p.overlays) {
+    if (ov.type === 'logo') { ov.type = 'sticker'; ov.kind = 'image'; }
+  }
   p.music = p.music || null;
   if (p.music) { p.music.cuts ||= []; p.music.removed ||= []; }
   p.export = { fps: 30, quality: 'high', fadeOut: 1.5, ...p.export };
@@ -212,18 +216,22 @@ export function newTextOverlay(p, presetId = 'title', tl) {
   };
 }
 
-export function newLogoOverlay(p, file, w, h, tl) {
+// Sticker : image fixe, image animée ou vidéo superposée (info : { file, kind, iw, ih, duration }).
+export function newStickerOverlay(p, info, tl) {
   return {
-    id: uid('l'),
-    type: 'logo',
-    file,
-    iw: w,
-    ih: h,
+    id: uid('s'),
+    type: 'sticker',
+    kind: info.kind || 'image',
+    file: info.file,
+    iw: info.iw,
+    ih: info.ih,
+    duration: info.duration || 0,
+    loop: true,
     x: 0.5,
-    y: 0.14,
-    w: 0.32,
+    y: 0.5,
+    w: 0.5,
     opacity: 1,
-    anim: 'fade',
+    anim: 'pop',
     start: 0,
     end: introEnd(tl),
   };

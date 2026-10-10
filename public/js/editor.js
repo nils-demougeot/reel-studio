@@ -8,7 +8,7 @@ import { createInspector } from './inspector.js';
 import { openExportDialog, loadAllFonts } from './export.js';
 import {
   importInto, pickAndImport, loadProjectMusic, addMediaClip, addText, deleteSelection, duplicateSelection,
-  nudgeSelection, setBeatsForSelection, buildFromTemplate, saveAsTemplate, splitAtPlayhead,
+  nudgeSelection, setBeatsForSelection, buildFromTemplate, saveAsTemplate, splitAtPlayhead, moveLayer,
 } from './actions.js';
 import { chooseTemplate, openTemplateDialog } from './template-ui.js';
 import { filesFromDrop } from './media.js';
@@ -188,6 +188,13 @@ export async function mountEditor(container, projectId, pending) {
       }
       case 't': case 'T': addText('title'); break;
       case 's': case 'S': splitAtPlayhead({ free: e.altKey }); break;
+      case ']': case '[': case '}': case '{':
+        // Ordre des calques : [ descendre, ] monter ; avec Maj : tout en bas / tout en haut.
+        if (store.sel.type === 'overlay') {
+          const upKey = e.key === ']' || e.key === '}';
+          moveLayer(store.sel.ids[0], e.shiftKey || e.key === '}' || e.key === '{' ? (upKey ? 'top' : 'bottom') : (upKey ? 'up' : 'down'));
+        }
+        break;
       case 'b': case 'B': emit('tap'); break;
       default:
         if (/^[1-5]$/.test(e.key) && store.sel.type === 'clips') setBeatsForSelection(BEAT_CHOICES[Number(e.key) - 1].beats);

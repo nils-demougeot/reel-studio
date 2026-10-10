@@ -33,6 +33,7 @@ const MIME = {
   '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
   '.ogg': 'audio/ogg', '.flac': 'audio/flac', '.woff2': 'font/woff2', '.ico': 'image/x-icon',
+  '.apng': 'image/apng', '.ogv': 'video/ogg', '.mkv': 'video/x-matroska',
 };
 
 // ---------- utilitaires ----------
@@ -349,6 +350,37 @@ async function transcodeVideo(id, file) {
   return path.basename(target);
 }
 
+// Convertit un sticker que le navigateur ne lit pas : image → PNG ; vidéo → WebM VP9 si elle
+// a de la transparence (conservée), sinon MP4 H.264 (plus rapide).
+async function convertSticker(id, file, target) {
+  const dir = path.join(projectDir(id), 'media');
+  const src = path.join(dir, safeName(file));
+  if (!(await exists(src))) throw new HttpError(404, 'Fichier introuvable');
+  const stem = path.parse(src).name;
+  if (target === 'image') {
+    const out = await uniquePath(dir, `${stem}.png`);
+    await runFfmpeg(['-y', '-i', src, '-frames:v', '1', out]);
+    return path.basename(out);
+  }
+  const probe = await new Promise((resolve) => {
+    const proc = spawn(ffmpegPath, ['-hide_banner', '-i', src], { windowsHide: true });
+    let log = '';
+    proc.stderr.on('data', (d) => { log += d; });
+    proc.on('close', () => resolve(log));
+  });
+  const alpha = /Video:.*\b(yuva\w*|argb|rgba|bgra|abgr|gbrap\w*|ya8|ya16\w*|pal8|rgba64\w*)\b/.test(probe);
+  if (alpha) {
+    const out = await uniquePath(dir, `${stem}.webm`);
+    await runFfmpeg(['-y', '-i', src, '-an', '-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-b:v', '0', '-crf', '30',
+      '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', '-auto-alt-ref', '0', out]);
+    return path.basename(out);
+  }
+  const out = await uniquePath(dir, `${stem}.mp4`);
+  await runFfmpeg(['-y', '-i', src, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p',
+    '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-movflags', '+faststart', out]);
+  return path.basename(out);
+}
+
 const exportsInProgress = new Map();
 
 async function startExport(id, opts) {
@@ -497,6 +529,10 @@ async function route(req, res) {
           ? await copyInto(path.join(media, safeName(file)), libDir(kind), safeName(file).replace(/^logo-/, ''))
           : await copyInto(libFile(kind, file), media, safeName(file));
         return sendJson(res, 200, { file: name });
+      }
+      if (b && c === 'convert-sticker' && m === 'POST') {
+        const { file, target } = await readJson(req);
+        return sendJson(res, 200, { file: await convertSticker(b, file, target === 'image' ? 'image' : 'video') });
       }
       if (b && c === 'transcode' && m === 'POST') {
         return sendJson(res, 200, { file: await transcodeVideo(b, (await readJson(req)).file) });

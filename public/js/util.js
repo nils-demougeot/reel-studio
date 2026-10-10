@@ -105,6 +105,12 @@ const ICONS = {
   eye: '<path d="M2.5 10s3-5 7.5-5 7.5 5 7.5 5-3 5-7.5 5-7.5-5-7.5-5z"/><circle cx="10" cy="10" r="2"/>',
   more: '<circle cx="5" cy="10" r=".8" fill="currentColor"/><circle cx="10" cy="10" r=".8" fill="currentColor"/><circle cx="15" cy="10" r=".8" fill="currentColor"/>',
   edit: '<path d="M4.5 15.5h3l8-8-3-3-8 8z"/>',
+  sticker: '<path d="M15.5 10.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h4.5z"/><path d="M10.5 15.5v-3.5a1.5 1.5 0 0 1 1.5-1.5h3.5"/>',
+  layers: '<path d="m10 3.5 6.5 3.5-6.5 3.5L3.5 7z"/><path d="m3.5 10.5 6.5 3.5 6.5-3.5"/><path d="m3.5 13.5 6.5 3.5 6.5-3.5"/>',
+  up: '<path d="m6 12 4-4 4 4"/>',
+  down: '<path d="m6 8 4 4 4-4"/>',
+  top: '<path d="M5.5 4.5h9"/><path d="m6 13 4-4 4 4"/>',
+  bottom: '<path d="M5.5 15.5h9"/><path d="m6 7 4 4 4-4"/>',
   scissors: '<circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="14" r="2.2"/><path d="M7.8 7.3 16 14M7.8 12.7 16 6"/>',
 };
 

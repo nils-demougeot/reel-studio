@@ -290,9 +290,9 @@ a { color: inherit; text-decoration: none; }
 .tl-overlays { min-height: 34px; }
 .tl-ov { position: absolute; height: 22px; border-radius: 5px; display: flex; align-items: center; cursor: grab; overflow: hidden; font-size: 12px; font-weight: 500; }
 .tl-ov-text { background: rgba(139, 123, 255, .28); border: 1px solid rgba(139, 123, 255, .6); }
-.tl-ov-logo { background: rgba(47, 196, 141, .24); border: 1px solid rgba(47, 196, 141, .6); }
+.tl-ov-sticker { background: rgba(47, 196, 141, .24); border: 1px solid rgba(47, 196, 141, .6); }
 .tl-ov.is-selected.tl-ov-text { background: var(--text-c); color: #fff; }
-.tl-ov.is-selected.tl-ov-logo { background: var(--logo); color: #06281b; }
+.tl-ov.is-selected.tl-ov-sticker { background: var(--logo); color: #06281b; }
 .tl-ov-label { flex: 1; padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .tl-ov-edge { width: 7px; align-self: stretch; cursor: ew-resize; flex: none; }
 .tl-ov-edge:hover { background: rgba(255, 255, 255, .35); }
@@ -398,3 +398,7 @@ a { color: inherit; text-decoration: none; }
 .tl-head-clips:hover, .tl-head-music:hover { color: var(--text); }
 .tl-head.is-active { color: var(--text); background: var(--panel-2); border-left: 2px solid var(--accent); padding-left: 8px; }
 .tl-cut .icon { color: var(--accent); }
+
+/* ---------- calques & stickers ---------- */
+.layer-row .btn { flex: 1 1 calc(50% - 6px); justify-content: flex-start; }
+.logo-preview video { max-height: 70px; max-width: 80%; }

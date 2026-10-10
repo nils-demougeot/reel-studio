@@ -1,5 +1,5 @@
 // Timeline : vignettes des médias (sélection, réordonnancement, durée au bord),
-// pistes texte / logo, musique avec forme d'onde et grille des temps.
+// calques (textes et stickers), musique avec forme d'onde et grille des temps.
 
 import { store, on, commit, select, setTime, setActiveTrack } from './store.js';
 import { beatLength, beatPhase, snapToBeat, musicSegments, songTimeAt } from './model.js';
@@ -29,7 +29,7 @@ export function createTimeline() {
   const content = h('div', { class: 'tl-content' }, rulerTrack, clipsTrack, ovTrack, musicTrack, marker, playhead);
   const scroller = h('div', { class: 'tl-scroll' }, content);
 
-  const ovHead = h('div', { class: 'tl-head tl-head-ov' }, icon('text', 15), 'Textes');
+  const ovHead = h('div', { class: 'tl-head tl-head-ov', title: 'Textes et stickers : la ligne du haut est au premier plan' }, icon('layers', 15), 'Calques');
   const clipsHead = h('div', { class: 'tl-head tl-head-clips', title: 'Cliquer pour couper les médias', onclick: () => setActiveTrack('clips') }, icon('image', 15), 'Médias');
   const musicHead = h('div', { class: 'tl-head tl-head-music', title: 'Cliquer pour couper la musique', onclick: () => setActiveTrack('music') }, icon('music', 15), 'Musique');
   const heads = h('div', { class: 'tl-heads' },
@@ -126,31 +126,34 @@ export function createTimeline() {
     clipsTrack.replaceChildren(frag);
   }
 
+  const ROW = 26;
+  // Une ligne par calque : la ligne du haut (dernier du tableau) est au premier plan.
   function renderOverlays() {
     const p = store.project;
-    const lanes = [];
-    const sorted = [...p.overlays].sort((a, b) => a.start - b.start);
+    const n = p.overlays.length;
     const frag = document.createDocumentFragment();
-    for (const ov of sorted) {
-      let lane = lanes.findIndex((end) => end <= ov.start + 1e-6);
-      if (lane < 0) { lane = lanes.length; lanes.push(0); }
-      lanes[lane] = ov.end;
-      const label = ov.type === 'text' ? (ov.text || 'Texte').replace(/\n/g, ' ') : 'Logo';
+    p.overlays.forEach((ov, i) => {
+      const row = n - 1 - i;
+      const name = ov.file ? ov.file.replace(/^sticker-/, '').replace(/\.[^.]+$/, '') : '';
+      const label = ov.type === 'text'
+        ? (ov.text || 'Texte').replace(/\n/g, ' ')
+        : `${{ video: 'Vidéo', anim: 'Animé' }[ov.kind] || 'Sticker'} · ${name}`;
       frag.append(h('div', {
         class: `tl-ov tl-ov-${ov.type} ${store.sel.type === 'overlay' && store.sel.ids[0] === ov.id ? 'is-selected' : ''}`,
         dataset: { id: ov.id },
-        style: { left: `${x(ov.start)}px`, width: `${Math.max(6, (ov.end - ov.start) * pps)}px`, top: `${4 + lane * 26}px` },
+        style: { left: `${x(ov.start)}px`, width: `${Math.max(6, (ov.end - ov.start) * pps)}px`, top: `${4 + row * ROW}px` },
       },
       h('div', { class: 'tl-ov-edge tl-ov-edge-l', dataset: { edge: 'l' } }),
       h('span', { class: 'tl-ov-label' }, label),
       h('div', { class: 'tl-ov-edge tl-ov-edge-r', dataset: { edge: 'r' } })));
-    }
-    const ovH = `${Math.max(1, lanes.length) * 26 + 8}px`;
+    });
+    const ovH = `${Math.max(1, n) * ROW + 8}px`;
     ovTrack.style.height = ovH;
     ovHead.style.height = ovH;
-    if (!p.overlays.length) frag.append(h('div', { class: 'tl-hint' }, 'Ajoutez un texte ou un logo depuis la barre au-dessus de l\'aperçu'));
+    if (!n) frag.append(h('div', { class: 'tl-hint' }, 'Ajoutez un texte ou un sticker depuis la barre au-dessus de l\'aperçu'));
     ovTrack.replaceChildren(frag);
   }
+
 
   function renderRuler() {
     const p = store.project;
@@ -421,7 +424,8 @@ export function createTimeline() {
     window.addEventListener('pointerup', up);
   }
 
-  // Textes / logos : sélection, déplacement et réglage de la durée d'affichage.
+  // Calques : sélection, déplacement dans le temps, durée d'affichage,
+  // et glisser vers le haut / le bas pour changer l'ordre de superposition.
   ovTrack.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     const el = e.target.closest('.tl-ov');
@@ -433,7 +437,9 @@ export function createTimeline() {
     const mode = e.target.dataset.edge || 'move';
     const { start: s0, end: e0 } = ov;
     const x0 = e.clientX;
+    const y0 = e.clientY;
     const key = `ov-${Date.now()}`;
+    let vertical = false;
     // Points d'accroche : coupes entre médias, tête de lecture, début.
     const snaps = [0, store.tl.total, ...store.tl.starts];
     const snap = (t) => {
@@ -442,6 +448,19 @@ export function createTimeline() {
       return best;
     };
     const move = (ev) => {
+      // Glisser verticalement (sans bouger dans le temps) : change l'ordre des calques.
+      if (mode === 'move' && (vertical || (Math.abs(ev.clientY - y0) > 12 && Math.abs(ev.clientY - y0) > Math.abs(ev.clientX - x0)))) {
+        vertical = true;
+        const p = store.project;
+        const n = p.overlays.length;
+        const row = clamp(Math.floor((ev.clientY - ovTrack.getBoundingClientRect().top - 4) / ROW), 0, n - 1);
+        const target = n - 1 - row;
+        const cur = p.overlays.findIndex((o) => o.id === id);
+        if (cur !== target) {
+          commit((proj) => { const [o] = proj.overlays.splice(cur, 1); proj.overlays.splice(target, 0, o); }, { key });
+        }
+        return;
+      }
       const dt = (ev.clientX - x0) / pps;
       let start = s0, end = e0;
       if (mode === 'move') {
