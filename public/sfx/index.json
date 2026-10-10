@@ -1,0 +1,104 @@
+[
+ {
+  "file": "whoosh.wav",
+  "name": "Whoosh",
+  "category": "Transitions",
+  "duration": 1.4
+ },
+ {
+  "file": "whoosh-long.wav",
+  "name": "Whoosh long",
+  "category": "Transitions",
+  "duration": 2.056
+ },
+ {
+  "file": "swish.wav",
+  "name": "Swish rapide",
+  "category": "Transitions",
+  "duration": 0.62
+ },
+ {
+  "file": "arrivee.wav",
+  "name": "Arrivée (vent + impact)",
+  "category": "Transitions",
+  "duration": 3.585
+ },
+ {
+  "file": "montee.wav",
+  "name": "Montée",
+  "category": "Transitions",
+  "duration": 3
+ },
+ {
+  "file": "aspiration.wav",
+  "name": "Aspiration (reverse)",
+  "category": "Transitions",
+  "duration": 1.65
+ },
+ {
+  "file": "impact.wav",
+  "name": "Impact grave",
+  "category": "Impacts",
+  "duration": 2.015
+ },
+ {
+  "file": "sub-drop.wav",
+  "name": "Sub drop",
+  "category": "Impacts",
+  "duration": 1.5
+ },
+ {
+  "file": "glitch.wav",
+  "name": "Glitch",
+  "category": "Impacts",
+  "duration": 0.522
+ },
+ {
+  "file": "clic.wav",
+  "name": "Clic",
+  "category": "Interface",
+  "duration": 0.032
+ },
+ {
+  "file": "clic-doux.wav",
+  "name": "Clic doux",
+  "category": "Interface",
+  "duration": 0.032
+ },
+ {
+  "file": "pop.wav",
+  "name": "Pop",
+  "category": "Interface",
+  "duration": 0.272
+ },
+ {
+  "file": "ding.wav",
+  "name": "Ding",
+  "category": "Interface",
+  "duration": 2.898
+ },
+ {
+  "file": "photo.wav",
+  "name": "Appareil photo",
+  "category": "Ambiance",
+  "duration": 0.279
+ },
+ {
+  "file": "air.wav",
+  "name": "Souffle d’air",
+  "category": "Ambiance",
+  "duration": 2.22
+ },
+ {
+  "file": "paillettes.wav",
+  "name": "Paillettes",
+  "category": "Ambiance",
+  "duration": 1.656
+ },
+ {
+  "file": "applaudissements.wav",
+  "name": "Applaudissements",
+  "category": "Ambiance",
+  "duration": 4.21
+ }
+]

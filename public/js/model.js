@@ -8,16 +8,22 @@ import { uid } from './util.js';
 export const FRAME_W = 1080;
 export const FRAME_H = 1920;
 
+// lineHeight : interligne propre à chaque police (les scripts ont de grandes boucles).
 export const FONTS = [
   { id: 'montserrat', family: 'Montserrat', label: 'Montserrat', weights: [400, 700, 800, 900] },
   { id: 'inter', family: 'Inter', label: 'Inter', weights: [400, 700, 800, 900] },
-  { id: 'bebas', family: 'Bebas Neue', label: 'Bebas Neue', weights: [400] },
-  { id: 'anton', family: 'Anton', label: 'Anton', weights: [400] },
-  { id: 'playfair', family: 'Playfair Display', label: 'Playfair', weights: [400, 700, 900] },
-  { id: 'caveat', family: 'Caveat', label: 'Caveat', weights: [400, 700] },
+  { id: 'bebas', family: 'Bebas Neue', label: 'Bebas Neue', weights: [400], lineHeight: 1.02 },
+  { id: 'bungee', family: 'Bungee', label: 'Bungee', weights: [400], lineHeight: 1.1 },
+  { id: 'abril', family: 'Abril Fatface', label: 'Abril', weights: [400], lineHeight: 1.12 },
+  { id: 'cinzel', family: 'Cinzel', label: 'Cinzel', weights: [400, 700, 900] },
+  { id: 'pacifico', family: 'Pacifico', label: 'Pacifico', weights: [400], lineHeight: 1.35 },
+  { id: 'greatvibes', family: 'Great Vibes', label: 'Great Vibes', weights: [400], lineHeight: 1.3 },
+  { id: 'marker', family: 'Permanent Marker', label: 'Marker', weights: [400], lineHeight: 1.2 },
 ];
 
-export const fontById = (id) => FONTS.find((f) => f.id === id) || FONTS[0];
+// Anciennes polices remplacées : les textes existants prennent leur remplaçante.
+const FONT_ALIASES = { anton: 'abril', playfair: 'cinzel', caveat: 'pacifico' };
+export const fontById = (id) => FONTS.find((f) => f.id === (FONT_ALIASES[id] || id)) || FONTS[0];
 
 export const BEAT_CHOICES = [
   { beats: 0.25, label: '¼' },
@@ -58,8 +64,10 @@ export const TEXT_PRESETS = {
   title: { label: 'Titre', font: 'montserrat', weight: 900, size: 120, style: 'none', uppercase: true, y: 0.42, anim: 'pop', spacing: 0 },
   subtitle: { label: 'Sous-titre', font: 'montserrat', weight: 700, size: 64, style: 'none', uppercase: false, y: 0.52, anim: 'rise', spacing: 0 },
   label: { label: 'Étiquette', font: 'inter', weight: 800, size: 58, style: 'lines', uppercase: false, y: 0.7, anim: 'pop', spacing: 0 },
-  impact: { label: 'Impact', font: 'anton', weight: 400, size: 150, style: 'outline', uppercase: true, y: 0.42, anim: 'pop', spacing: 2 },
-  hand: { label: 'Manuscrit', font: 'caveat', weight: 700, size: 110, style: 'none', uppercase: false, y: 0.45, anim: 'fade', spacing: 0 },
+  impact: { label: 'Impact', font: 'bungee', weight: 400, size: 120, style: 'outline', uppercase: true, y: 0.42, anim: 'pop', spacing: 0 },
+  hand: { label: 'Manuscrit', font: 'pacifico', weight: 400, size: 100, style: 'none', uppercase: false, y: 0.45, anim: 'fade', spacing: 0 },
+  vintage: { label: 'Vintage', font: 'abril', weight: 400, size: 120, style: 'none', uppercase: false, y: 0.44, anim: 'fade', spacing: 1 },
+  elegant: { label: 'Élégant', font: 'greatvibes', weight: 400, size: 140, style: 'none', uppercase: false, y: 0.45, anim: 'fade', spacing: 0 },
 };
 
 export const SWATCHES = ['#ffffff', '#111111', '#ff5b2e', '#ffd23f', '#3aa0ff', '#22c08a', '#ff4f9a', '#7c6cff'];
@@ -71,6 +79,7 @@ export function normalizeProject(p) {
   p.media = p.media || {};
   p.clips = p.clips || [];
   p.overlays = p.overlays || [];
+  p.sounds = p.sounds || []; // effets sonores : { id, name, file, start, volume, duration }
   // Les anciens « logos » sont des stickers image.
   for (const ov of p.overlays) {
     if (ov.type === 'logo') { ov.type = 'sticker'; ov.kind = 'image'; }
@@ -116,6 +125,33 @@ export function beatPhase(p) {
   const start = p.music ? p.music.start : 0;
   const ph = ((p.rhythm.offset - start) % L + L) % L;
   return ph;
+}
+
+// ---------- aimant ----------
+// Distance d'attraction de l'aimant, en pixels de timeline.
+export const SNAP_PX = 7;
+
+// Finesse de la grille aimantée selon le zoom : temps entiers, ou quarts de temps
+// seulement quand ils sont assez espacés à l'écran pour être visés volontairement.
+export const gridSubFor = (p, pps) => ((beatLength(p) / 4) * pps >= 24 ? 4 : 1);
+
+// Renvoie la cible la plus proche de t si elle est à moins de `tol` secondes, sinon t.
+export function nearest(t, targets, tol) {
+  let best = t, bd = tol;
+  for (const x of targets) {
+    const dist = Math.abs(x - t);
+    if (dist < bd) { bd = dist; best = x; }
+  }
+  return best;
+}
+
+// Temps de la grille musicale (en secondes de vidéo) entre from et to ; sub = 4 pour les quarts de temps.
+export function beatGrid(p, from, to, sub = 1) {
+  const step = beatLength(p) / sub;
+  const ph = beatPhase(p) % step;
+  const out = [];
+  for (let k = Math.ceil((from - ph) / step); ph + k * step <= to; k++) out.push(ph + k * step);
+  return out;
 }
 
 export function snapToBeat(p, songTime) {

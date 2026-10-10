@@ -41,6 +41,13 @@ export function fmtTime(s, precise = true) {
   return `${m}:${str}`;
 }
 
+// Temps au centième de seconde (affichage de la tête de lecture).
+export function fmtTimePrecise(s) {
+  if (!Number.isFinite(s)) s = 0;
+  const m = Math.floor(s / 60);
+  return `${m}:${(s - m * 60).toFixed(2).padStart(5, '0')}`;
+}
+
 export function fmtSeconds(s) {
   return `${round(s, 2).toLocaleString('fr-FR')} s`;
 }
@@ -111,6 +118,8 @@ const ICONS = {
   down: '<path d="m6 8 4 4 4-4"/>',
   top: '<path d="M5.5 4.5h9"/><path d="m6 13 4-4 4 4"/>',
   bottom: '<path d="M5.5 15.5h9"/><path d="m6 7 4 4 4-4"/>',
+  magnet: '<path d="M5 4.5v6a5 5 0 0 0 10 0v-6"/><path d="M5 4.5h3v6a2 2 0 0 0 4 0v-6h3"/><path d="M5 7.5h3M12 7.5h3"/>',
+  sound: '<path d="M4 8v4h3l4 3.5v-11L7 8z"/><path d="M13.5 7.5a3.5 3.5 0 0 1 0 5M15.5 5.5a6.5 6.5 0 0 1 0 9"/>',
   scissors: '<circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="14" r="2.2"/><path d="M7.8 7.3 16 14M7.8 12.7 16 6"/>',
 };
 

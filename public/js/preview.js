@@ -5,8 +5,9 @@ import { store, on, emit, setTime, setPlaying, select, commit } from './store.js
 import { drawFrame } from './render.js';
 import { clipIndexAt, FRAME_W, FRAME_H, FIT_MODES, musicSegments } from './model.js';
 import { PreviewSources } from './media.js';
-import { player, addText, addSticker, addColorCard, updateAllClips } from './actions.js';
-import { h, icon, clamp, fmtTime, rafThrottle } from './util.js';
+import { player, addText, addSticker, addColorCard, updateAllClips, soundsForPlayer } from './actions.js';
+import { openSoundPicker } from './sound-picker.js';
+import { h, icon, clamp, fmtTime, fmtTimePrecise, rafThrottle } from './util.js';
 
 const SNAP = 0.012;
 
@@ -17,7 +18,7 @@ export function play() {
   const p = store.project;
   if (!p?.clips.length) return;
   if (store.time >= store.tl.total - 0.02) setTime(0);
-  player.play(store.time, p.music, musicSegments(p));
+  player.play(store.time, p.music, musicSegments(p), soundsForPlayer(p));
   sources.setPlaying(true);
   setPlaying(true);
   const loop = () => {
@@ -78,6 +79,7 @@ export function createPreview() {
     h('button', { class: 'btn btn-chip chip-text', onclick: () => addText('title'), title: 'Ajouter un texte (T)' }, icon('text', 16), 'Texte'),
     h('button', { class: 'btn btn-chip chip-logo', onclick: addSticker, title: 'Ajouter un sticker : logo, image, GIF animé ou vidéo' }, icon('sticker', 16), 'Sticker'),
     h('button', { class: 'btn btn-chip chip-card', onclick: addColorCard, title: 'Ajouter un carton de couleur' }, icon('card', 16), 'Carton'),
+    h('button', { class: 'btn btn-chip chip-sound', onclick: openSoundPicker, title: 'Ajouter un effet sonore à la tête de lecture' }, icon('sound', 16), 'Son'),
     h('div', { class: 'spacer' }),
     fitSwitch,
     safeBtn);
@@ -125,7 +127,7 @@ export function createPreview() {
     if (i >= 0) sources.preroll(p.clips[i + 1]);
     empty.style.display = p.clips.length ? 'none' : '';
     updateSelBox();
-    timeEl.textContent = fmtTime(store.time);
+    timeEl.textContent = fmtTimePrecise(store.time);
     totalEl.textContent = `/ ${fmtTime(store.tl.total)}`;
   };
   requestRender = rafThrottle(render);
@@ -231,15 +233,15 @@ export function createPreview() {
   on('project', (d) => {
     const p = store.project;
     if (d?.source === 'open') sources.reset();
-    const sig = `${p.music?.file}|${p.music?.start}|${p.rhythm.bpm}|${JSON.stringify(p.music?.removed)}|${JSON.stringify(p.music?.cuts)}`;
-    if (store.playing && sig !== audioSig) player.play(store.time, p.music, musicSegments(p));
+    const sig = `${p.music?.file}|${p.music?.start}|${p.rhythm.bpm}|${JSON.stringify(p.music?.removed)}|${JSON.stringify(p.music?.cuts)}|${JSON.stringify(p.sounds)}`;
+    if (store.playing && sig !== audioSig) player.play(store.time, p.music, musicSegments(p), soundsForPlayer(p));
     if (store.playing) player.setVolume(p.music?.volume ?? 1);
     audioSig = sig;
     renderFitSwitch();
     requestRender();
   });
   on('time', (d) => {
-    if (store.playing && !d?.fromPlayback) player.play(store.time, store.project.music, musicSegments(store.project));
+    if (store.playing && !d?.fromPlayback) player.play(store.time, store.project.music, musicSegments(store.project), soundsForPlayer(store.project));
     requestRender();
   });
   on('select', requestRender);

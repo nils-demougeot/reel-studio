@@ -20,7 +20,10 @@ const LIB_DIR = path.resolve(process.env.REEL_LIB_DIR || path.join(APP_DIR, 'bib
 const LIB_KINDS = {
   musiques: /\.(mp3|wav|m4a|aac|ogg|flac)$/i,
   logos: /\.(png|jpe?g|webp|svg|gif)$/i,
+  sons: /\.(mp3|wav|m4a|aac|ogg|flac|opus|webm)$/i, // effets sonores ajoutés par l'utilisateur
+  sfx: /\.(wav|mp3|ogg)$/i, // effets sonores fournis avec l'application (lecture seule)
 };
+const READ_ONLY_KINDS = new Set(['sfx']);
 const PORT = Number(process.env.PORT || 5173);
 const HOST = '127.0.0.1';
 const FILE_KINDS = new Set(['media', 'thumbs', 'proxies', 'exports']);
@@ -186,6 +189,7 @@ async function trashProject(id) {
 
 function libDir(kind) {
   if (!LIB_KINDS[kind]) throw new HttpError(400, 'Bibliothèque inconnue');
+  if (kind === 'sfx') return path.join(PUBLIC_DIR, 'sfx');
   return path.join(LIB_DIR, kind);
 }
 
@@ -393,8 +397,10 @@ async function startExport(id, opts) {
   const outFile = await uniquePath(outDir, `${safeName(opts.name || 'reel').replace(/\.mp4$/i, '')}.mp4`);
 
   const args = ['-y', '-hide_banner', '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0'];
-  // Musique : les passages gardés (après d'éventuelles coupes) sont recollés bout à bout.
-  let audioFilter = null;
+  // Son : la musique (passages gardés recollés bout à bout) et les effets sonores sont mixés.
+  const graph = [];
+  const mixInputs = [];
+  let nextInput = 1;
   if (opts.music?.file) {
     const musicPath = path.join(dir, 'media', safeName(opts.music.file));
     if (await exists(musicPath)) {
@@ -411,19 +417,44 @@ async function startExport(id, opts) {
         if (acc >= duration + 0.5) break;
       }
       if (segs.length) {
+        const mi = nextInput++;
         args.push('-i', musicPath);
         const vol = Math.max(0, Number(opts.music.volume ?? 1));
         const fade = Math.min(duration, Math.max(0, Number(opts.music.fadeOut) || 0));
-        const parts = segs.map((sg, i) => {
+        segs.forEach((sg, i) => {
           const len = sg.to - sg.from;
-          return `[1:a]atrim=start=${sg.from.toFixed(4)}:end=${sg.to.toFixed(4)},asetpts=PTS-STARTPTS,`
-            + `afade=t=in:st=0:d=0.008,afade=t=out:st=${Math.max(0, len - 0.008).toFixed(4)}:d=0.008[m${i}]`;
+          graph.push(`[${mi}:a]atrim=start=${sg.from.toFixed(4)}:end=${sg.to.toFixed(4)},asetpts=PTS-STARTPTS,`
+            + `afade=t=in:st=0:d=0.008,afade=t=out:st=${Math.max(0, len - 0.008).toFixed(4)}:d=0.008[m${i}]`);
         });
         const tail = [`volume=${vol.toFixed(3)}`, 'afade=t=in:st=0:d=0.03'];
         if (fade > 0) tail.push(`afade=t=out:st=${(duration - fade).toFixed(3)}:d=${fade.toFixed(3)}`);
-        audioFilter = `${parts.join(';')};${segs.map((_, i) => `[m${i}]`).join('')}concat=n=${segs.length}:v=0:a=1,${tail.join(',')}[aout]`;
+        tail.push('aformat=sample_rates=48000:channel_layouts=stereo');
+        graph.push(`${segs.map((_, i) => `[m${i}]`).join('')}concat=n=${segs.length}:v=0:a=1,${tail.join(',')}[mus]`);
+        mixInputs.push('[mus]');
       }
     }
+  }
+  const sounds = Array.isArray(opts.sounds) ? opts.sounds.slice(0, 80) : [];
+  for (const [j, snd] of sounds.entries()) {
+    const at = Math.max(0, Number(snd.at) || 0);
+    if (at >= duration) continue;
+    const soundPath = path.join(dir, 'media', safeName(snd.file));
+    if (!(await exists(soundPath))) continue;
+    const k = nextInput++;
+    args.push('-i', soundPath);
+    const vol = Math.max(0, Math.min(4, Number(snd.volume ?? 1)));
+    graph.push(`[${k}:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=${vol.toFixed(3)},`
+      + `adelay=delays=${Math.round(at * 1000)}:all=1[s${j}]`);
+    mixInputs.push(`[s${j}]`);
+  }
+  let audioFilter = null;
+  if (mixInputs.length) {
+    // Limiteur final : évite la saturation quand musique et effets se superposent.
+    const limiter = 'alimiter=limit=0.97:attack=5:release=60:level=0:latency=1';
+    graph.push(mixInputs.length === 1
+      ? `${mixInputs[0]}${limiter}[aout]`
+      : `${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest:normalize=0,${limiter}[aout]`);
+    audioFilter = graph.join(';');
   }
   const hasAudio = Boolean(audioFilter);
   if (hasAudio) args.push('-filter_complex', audioFilter);
@@ -474,6 +505,7 @@ async function route(req, res) {
     const [, a, b, c, d] = parts;
     if (a === 'info' && m === 'GET') return sendJson(res, 200, { dataDir: DATA_DIR, ffmpeg: Boolean(ffmpegPath) });
 
+    if (a === 'library' && b && READ_ONLY_KINDS.has(b) && m !== 'GET' && c !== 'reveal') throw new HttpError(403, 'Bibliothèque en lecture seule');
     if (a === 'library' && b) {
       if (!c && m === 'GET') return sendJson(res, 200, await listLibrary(b));
       if (c === 'files' && m === 'PUT') return sendJson(res, 200, { file: await receiveLibFile(req, b, url.searchParams.get('name')) });
@@ -613,7 +645,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 await fsp.mkdir(DATA_DIR, { recursive: true });
-for (const k of [...Object.keys(LIB_KINDS), 'modeles']) await fsp.mkdir(path.join(LIB_DIR, k), { recursive: true });
+for (const k of [...Object.keys(LIB_KINDS).filter((k) => !READ_ONLY_KINDS.has(k)), 'modeles']) await fsp.mkdir(path.join(LIB_DIR, k), { recursive: true });
 server.listen(PORT, HOST, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`\n  Reel Studio est prêt : ${url}`);

@@ -1,9 +1,11 @@
 // Timeline : vignettes des médias (sélection, réordonnancement, durée au bord),
 // calques (textes et stickers), musique avec forme d'onde et grille des temps.
 
-import { store, on, commit, select, setTime, setActiveTrack } from './store.js';
-import { beatLength, beatPhase, snapToBeat, musicSegments, songTimeAt } from './model.js';
-import { music, moveClipsTo, deleteSelection, shuffleClips, reverseClips, sortClips, splitAtPlayhead } from './actions.js';
+import { store, on, commit, select, setTime, setActiveTrack, setMagnet } from './store.js';
+import { beatLength, beatPhase, musicSegments, songTimeAt, SNAP_PX, nearest, beatGrid, gridSubFor } from './model.js';
+import { music, moveClipsTo, deleteSelection, shuffleClips, reverseClips, sortClips, splitAtPlayhead, magnetOn } from './actions.js';
+import { openMusicEditor } from './music-editor.js';
+import { cssPaint } from './render.js';
 import { fileUrl } from './api.js';
 import { h, icon, clamp, rafThrottle, fmtTime } from './util.js';
 
@@ -21,21 +23,24 @@ export function createTimeline() {
   const rulerTrack = h('div', { class: 'tl-ruler' }, ruler);
   const clipsTrack = h('div', { class: 'tl-track tl-clips' });
   const ovTrack = h('div', { class: 'tl-track tl-overlays' });
+  const soundTrack = h('div', { class: 'tl-track tl-sounds' });
   const waveCanvas = h('canvas', { class: 'tl-wave-canvas' });
   const musicLabel = h('div', { class: 'tl-music-label' });
   const musicTrack = h('div', { class: 'tl-track tl-music' }, waveCanvas, musicLabel);
   const playhead = h('div', { class: 'tl-playhead' }, h('div', { class: 'tl-playhead-knob' }));
   const marker = h('div', { class: 'tl-insert' });
-  const content = h('div', { class: 'tl-content' }, rulerTrack, clipsTrack, ovTrack, musicTrack, marker, playhead);
+  const content = h('div', { class: 'tl-content' }, rulerTrack, clipsTrack, ovTrack, soundTrack, musicTrack, marker, playhead);
   const scroller = h('div', { class: 'tl-scroll' }, content);
 
   const ovHead = h('div', { class: 'tl-head tl-head-ov', title: 'Textes et stickers : la ligne du haut est au premier plan' }, icon('layers', 15), 'Calques');
   const clipsHead = h('div', { class: 'tl-head tl-head-clips', title: 'Cliquer pour couper les médias', onclick: () => setActiveTrack('clips') }, icon('image', 15), 'Médias');
   const musicHead = h('div', { class: 'tl-head tl-head-music', title: 'Cliquer pour couper la musique', onclick: () => setActiveTrack('music') }, icon('music', 15), 'Musique');
+  const soundHead = h('div', { class: 'tl-head tl-head-sounds', title: 'Effets sonores' }, icon('sound', 15), 'Sons');
   const heads = h('div', { class: 'tl-heads' },
     h('div', { class: 'tl-head tl-head-ruler' }),
     clipsHead,
     ovHead,
+    soundHead,
     musicHead);
 
   const selInfo = h('span', { class: 'tl-info' });
@@ -51,6 +56,16 @@ export function createTimeline() {
   const cutBtn = h('button', {
     class: 'btn btn-ghost btn-sm tl-cut', onclick: (e) => splitAtPlayhead({ free: e.altKey }),
   }, icon('scissors', 15), 'Couper');
+  const magnetBtn = h('button', {
+    class: 'btn btn-ghost btn-sm tl-magnet', onclick: () => setMagnet(!store.magnet),
+  }, icon('magnet', 15), 'Aimant');
+  const renderMagnet = () => {
+    magnetBtn.classList.toggle('is-on', store.magnet);
+    magnetBtn.title = store.magnet
+      ? 'Aimant activé : coupes, durées et calques s’accrochent aux temps et aux autres éléments quand ils en sont proches. Alt pour l’ignorer.'
+      : 'Aimant désactivé : tout se place librement, au pixel près. Alt pour aimanter ponctuellement.';
+  };
+  renderMagnet();
   const toolbar = h('div', { class: 'tl-toolbar' },
     selInfo,
     h('button', { class: 'btn btn-ghost btn-sm', onclick: () => select('clips', store.project.clips.map((c) => c.id)), title: 'Ctrl+A' }, 'Tout sélectionner'),
@@ -59,6 +74,7 @@ export function createTimeline() {
     sortMenu,
     cutBtn,
     h('button', { class: 'btn btn-ghost btn-sm', onclick: deleteSelection, title: 'Supprimer (Suppr)' }, icon('trash', 15), 'Supprimer'),
+    magnetBtn,
     h('div', { class: 'spacer' }),
     h('button', { class: 'btn btn-icon btn-sm', onclick: () => setZoom(pps / 1.4), title: 'Dézoomer' }, icon('zoomout', 16)),
     zoomInput,
@@ -73,6 +89,7 @@ export function createTimeline() {
     const ax = anchorClientX != null ? anchorClientX - r.left : r.width / 2;
     const tAnchor = tAt(scroller.scrollLeft + ax);
     pps = clamp(v, MIN_PPS, MAX_PPS);
+    store.pps = pps;
     localStorage.setItem('reel-pps', String(pps));
     zoomInput.value = String(Math.round(1000 * Math.log(pps / MIN_PPS) / Math.log(MAX_PPS / MIN_PPS)));
     renderAll();
@@ -101,6 +118,9 @@ export function createTimeline() {
     return Math.max(scroller.clientWidth, x(Math.max(store.tl.total, Math.min(musicEnd, store.tl.total + 30))) + 200);
   }
 
+  // Zone hachurée à partir de `left` pixels : dépasse la durée réelle du fichier.
+  const overflowZone = (left, title) => h('div', { class: 'tl-overflow', style: { left: `${left}px` }, title });
+
   function renderClips() {
     const p = store.project;
     const { starts, durs } = store.tl;
@@ -115,11 +135,16 @@ export function createTimeline() {
       });
       if (m) el.style.backgroundImage = `url("${fileUrl(p.id, 'thumbs', `${m.id}.jpg`)}")`;
       else {
-        el.style.backgroundColor = c.color;
+        el.style.background = cssPaint(c.color);
         el.classList.add('is-card');
         if (durs[i] * pps > 50) el.append(h('span', { class: 'tl-clip-label' }, 'Carton'));
       }
       if (m?.type === 'video' && durs[i] * pps > 26) el.append(h('span', { class: 'tl-clip-badge' }, icon('video', 12)));
+      // Partie au-delà de la fin réelle de la vidéo : hachurée (la dernière image reste affichée).
+      if (m?.type === 'video' && m.duration) {
+        const avail = Math.max(0, m.duration - (c.trim || 0));
+        if (durs[i] > avail + 0.02) el.append(overflowZone(avail * pps, 'Au-delà de la fin de la vidéo : la dernière image reste affichée'));
+      }
       if (durs[i] * pps > 10) el.append(h('div', { class: 'tl-clip-edge', dataset: { edge: '1' } }));
       frag.append(el);
     });
@@ -145,6 +170,9 @@ export function createTimeline() {
       },
       h('div', { class: 'tl-ov-edge tl-ov-edge-l', dataset: { edge: 'l' } }),
       h('span', { class: 'tl-ov-label' }, label),
+      ov.type === 'sticker' && ov.loop === false && ov.duration && ov.end - ov.start > ov.duration + 0.02
+        ? overflowZone(ov.duration * pps, 'Au-delà de la fin du sticker : la dernière image reste affichée')
+        : null,
       h('div', { class: 'tl-ov-edge tl-ov-edge-r', dataset: { edge: 'r' } })));
     });
     const ovH = `${Math.max(1, n) * ROW + 8}px`;
@@ -154,6 +182,28 @@ export function createTimeline() {
     ovTrack.replaceChildren(frag);
   }
 
+
+  // Effets sonores : rangés sur plusieurs lignes s'ils se chevauchent.
+  function renderSounds() {
+    const p = store.project;
+    const lanes = [];
+    const frag = document.createDocumentFragment();
+    for (const s of [...p.sounds].sort((a, b) => a.start - b.start)) {
+      let lane = lanes.findIndex((end) => end <= s.start + 1e-6);
+      if (lane < 0) { lane = lanes.length; lanes.push(0); }
+      lanes[lane] = s.start + s.duration;
+      frag.append(h('div', {
+        class: `tl-snd ${store.sel.type === 'sound' && store.sel.ids.includes(s.id) ? 'is-selected' : ''}`,
+        dataset: { id: s.id },
+        style: { left: `${x(s.start)}px`, width: `${Math.max(6, s.duration * pps)}px`, top: `${4 + lane * 24}px` },
+      }, h('span', { class: 'tl-ov-label' }, s.name)));
+    }
+    const hgt = `${Math.max(1, lanes.length) * 24 + 8}px`;
+    soundTrack.style.height = hgt;
+    soundHead.style.height = hgt;
+    if (!p.sounds.length) frag.append(h('div', { class: 'tl-hint' }, 'Ajoutez un effet sonore avec le bouton « Son » au-dessus de l’aperçu'));
+    soundTrack.replaceChildren(frag);
+  }
 
   function renderRuler() {
     const p = store.project;
@@ -216,7 +266,9 @@ export function createTimeline() {
       return;
     }
     const cut = p.music.removed.length ? ` · ${p.music.removed.length} passage${p.music.removed.length > 1 ? 's' : ''} supprimé${p.music.removed.length > 1 ? 's' : ''}` : '';
-    musicLabel.replaceChildren(h('strong', {}, p.music.name), h('span', {}, ` · glisser pour choisir le passage, cliquer pour sélectionner${cut}`));
+    musicLabel.replaceChildren(h('strong', {}, p.music.name), h('span', {}, cut),
+      h('button', { class: 'tl-music-edit', onclick: (e) => { e.stopPropagation(); openMusicEditor(); }, onpointerdown: (e) => e.stopPropagation() },
+        icon('scissors', 12), 'Choisir les passages'));
     if (!music.peaks) return;
     const { data, perSecond } = music.peaks;
     const sl = scroller.scrollLeft;
@@ -286,6 +338,7 @@ export function createTimeline() {
     content.style.width = `${contentWidth()}px`;
     renderClips();
     renderOverlays();
+    renderSounds();
     renderRuler();
     renderWave();
     renderPlayhead();
@@ -405,10 +458,15 @@ export function createTimeline() {
     const x0 = e.clientX;
     const key = `resize-${Date.now()}`;
     root.classList.add('is-resizing');
+    const start = store.tl.starts[store.project.clips.findIndex((c) => c.id === clip.id)] || 0;
+    const marks = [store.time, ...store.project.overlays.flatMap((o) => [o.start, o.end])];
     const move = (ev) => {
-      const raw = b0 + (ev.clientX - x0) / pps / L;
-      const q = ev.altKey ? 0.0625 : 0.25;
-      const beats = Math.max(q, Math.round(raw / q) * q);
+      let end = start + b0 * L + (ev.clientX - x0) / pps;
+      if (magnetOn(ev.altKey)) {
+        const tol = SNAP_PX / pps;
+        end = nearest(end, [...beatGrid(store.project, end - tol, end + tol, gridSubFor(store.project, pps)), ...marks], tol);
+      }
+      const beats = Math.max(0.04 / L, (end - start) / L);
       commit((p) => {
         let changed = false;
         for (const c of p.clips) if (set.has(c.id) && c.beats !== beats) { c.beats = beats; changed = true; }
@@ -441,13 +499,12 @@ export function createTimeline() {
     const key = `ov-${Date.now()}`;
     let vertical = false;
     // Points d'accroche : coupes entre médias, tête de lecture, début.
-    const snaps = [0, store.tl.total, ...store.tl.starts];
-    const snap = (t) => {
-      let best = t, bd = 8 / pps;
-      for (const s of snaps) if (Math.abs(s - t) < bd) { bd = Math.abs(s - t); best = s; }
-      return best;
-    };
+    const snaps = [0, store.tl.total, store.time, ...store.tl.starts,
+      ...store.project.overlays.filter((o) => o.id !== id).flatMap((o) => [o.start, o.end])];
+    let magnet = store.magnet;
+    const snap = (t) => (magnet ? nearest(t, snaps, SNAP_PX / pps) : t);
     const move = (ev) => {
+      magnet = magnetOn(ev.altKey);
       // Glisser verticalement (sans bouger dans le temps) : change l'ordre des calques.
       if (mode === 'move' && (vertical || (Math.abs(ev.clientY - y0) > 12 && Math.abs(ev.clientY - y0) > Math.abs(ev.clientX - x0)))) {
         vertical = true;
@@ -480,42 +537,49 @@ export function createTimeline() {
     window.addEventListener('pointerup', up);
   });
 
-  // Musique : glisser pour choisir le passage (calé sur les temps, Alt pour un réglage libre).
-  musicTrack.addEventListener('pointerdown', (e) => {
-    const p = store.project;
+  // Effets sonores : clic pour sélectionner, glisser pour déplacer (aimanté aux coupes, aux temps…).
+  soundTrack.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
-    setActiveTrack('music');
-    if (!p.music) return;
-    const start0 = p.music.start;
+    const el = e.target.closest('.tl-snd');
+    if (!el) { select(null); scrub(e); return; }
+    const id = el.dataset.id;
+    const snd = store.project.sounds.find((s) => s.id === id);
+    select('sound', [id]);
+    const s0 = snd.start;
     const x0 = e.clientX;
-    const key = `music-${Date.now()}`;
-    let dragged = false;
-    musicTrack.classList.add('is-dragging');
+    const key = `snd-${Date.now()}`;
+    const p = store.project;
+    const marks = [0, store.time, store.tl.total, ...store.tl.starts,
+      ...p.overlays.flatMap((o) => [o.start, o.end]), ...p.sounds.filter((s) => s.id !== id).map((s) => s.start)];
     const move = (ev) => {
-      if (!dragged && Math.abs(ev.clientX - x0) < 4) return;
-      dragged = true;
-      let s = clamp(start0 - (ev.clientX - x0) / pps, 0, Math.max(0, p.music.duration - 1));
-      if (!ev.altKey) s = snapToBeat(store.project, s);
-      commit((proj) => { if (proj.music.start === s) return false; proj.music.start = s; }, { key });
+      let start = Math.max(0, s0 + (ev.clientX - x0) / pps);
+      if (magnetOn(ev.altKey)) {
+        const tol = SNAP_PX / pps;
+        start = nearest(start, [...marks, ...beatGrid(store.project, start - tol, start + tol, 1)], tol);
+      }
+      commit((proj) => { const s = proj.sounds.find((q) => q.id === id); if (s.start === start) return false; s.start = start; }, { key });
     };
-    const up = (ev) => {
-      musicTrack.classList.remove('is-dragging');
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      if (dragged) return;
-      // Simple clic : sélection du morceau de musique sous la souris (+ déplacement de la tête de lecture).
-      const t = pointerT(ev);
-      const seg = musicSegments(store.project).find((sg) => t >= sg.at && t < sg.at + (sg.to - sg.from));
-      if (t >= 0 && t <= store.tl.total) setTime(t);
-      if (!seg) { select(null); return; }
-      const already = store.sel.type === 'music' ? store.sel.ids : [];
-      if (ev.ctrlKey || ev.metaKey || ev.shiftKey) {
-        select('music', already.includes(seg.key) ? already.filter((k) => k !== seg.key) : [...already, seg.key]);
-      } else select('music', [seg.key]);
-    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   });
+
+  // Musique : un clic sélectionne un passage (et place la tête de lecture),
+  // un double-clic ouvre la fenêtre de choix des passages.
+  musicTrack.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    setActiveTrack('music');
+    if (!store.project.music) return;
+    const t = pointerT(e);
+    if (t >= 0 && t <= store.tl.total) setTime(t);
+    const seg = musicSegments(store.project).find((sg) => t >= sg.at && t < sg.at + (sg.to - sg.from));
+    if (!seg) { select(null); return; }
+    const already = store.sel.type === 'music' ? store.sel.ids : [];
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      select('music', already.includes(seg.key) ? already.filter((k) => k !== seg.key) : [...already, seg.key]);
+    } else select('music', [seg.key]);
+  });
+  musicTrack.addEventListener('dblclick', () => { if (store.project.music) openMusicEditor(); });
 
   // ---------- abonnements ----------
   on('project', (d) => {
@@ -529,6 +593,7 @@ export function createTimeline() {
   });
   on('select', scheduleAll);
   on('music', scheduleAll);
+  on('magnet', renderMagnet);
   on('time', () => {
     renderPlayhead();
     if (store.playing) {

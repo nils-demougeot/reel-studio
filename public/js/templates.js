@@ -30,7 +30,7 @@ export const BUILTIN_TEMPLATES = [
     fit: 'contain', motion: 'none',
     outroCard: { beats: 4, color: '#000000' },
     overlays: [
-      { anchor: 'start', offset: 0, len: 8, data: title({ preset: 'impact', font: 'anton', weight: 400, size: 150, style: 'outline', bgColor: '#000000', uppercase: true, y: 0.44, anim: 'pop' }) },
+      { anchor: 'start', offset: 0, len: 8, data: title({ preset: 'impact', font: 'bungee', weight: 400, size: 120, style: 'outline', bgColor: '#000000', uppercase: true, y: 0.44, anim: 'pop' }) },
       { anchor: 'start', offset: 0, len: 8, data: subtitle({ font: 'montserrat', weight: 800, size: 54, style: 'lines', bgColor: '#ff5b2e', y: 0.56, anim: 'rise' }) },
       { anchor: 'end', offset: 0, len: 4, data: logo({ x: 0.5, y: 0.5, w: 0.5, anim: 'pop' }) },
     ],
@@ -75,9 +75,9 @@ export const BUILTIN_TEMPLATES = [
     fit: 'blur', motion: 'zoomIn',
     outroCard: null,
     overlays: [
-      { anchor: 'start', offset: 0, len: 4, data: title({ font: 'caveat', weight: 700, size: 130, style: 'none', uppercase: false, y: 0.45, anim: 'fade' }) },
+      { anchor: 'start', offset: 0, len: 4, data: title({ font: 'pacifico', weight: 400, size: 115, style: 'none', uppercase: false, y: 0.45, anim: 'fade' }) },
       { anchor: 'start', offset: 0, len: 4, data: subtitle({ font: 'inter', weight: 700, size: 50, y: 0.54, anim: 'fade' }) },
-      { anchor: 'end', offset: 0, len: 4, data: { type: 'text', preset: 'hand', text: 'Merci à tous !', font: 'caveat', weight: 700, size: 120, y: 0.42, anim: 'fade' } },
+      { anchor: 'end', offset: 0, len: 4, data: { type: 'text', preset: 'hand', text: 'Merci à tous !', font: 'pacifico', weight: 400, size: 105, y: 0.42, anim: 'fade' } },
       { anchor: 'end', offset: 0, len: 4, data: logo({ x: 0.5, y: 0.62, w: 0.3, anim: 'fade' }) },
     ],
   },

@@ -70,7 +70,7 @@ export function disposeAnimated(anim) {
 export function stickerTime(ov, local) {
   const dur = ov.duration || 0;
   if (!dur) return 0;
-  if (ov.loop === false) return Math.min(Math.max(0, local), Math.max(0, dur - 0.04));
+  if (ov.loop === false) return Math.min(Math.max(0, local), Math.max(0, dur - 0.04)); // puis dernière image
   return ((local % dur) + dur) % dur;
 }
 

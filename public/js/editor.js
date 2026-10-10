@@ -7,7 +7,7 @@ import { createTimeline } from './timeline.js';
 import { createInspector } from './inspector.js';
 import { openExportDialog, loadAllFonts } from './export.js';
 import {
-  importInto, pickAndImport, loadProjectMusic, addMediaClip, addText, deleteSelection, duplicateSelection,
+  importInto, pickAndImport, loadProjectMusic, loadProjectSounds, addMediaClip, addText, deleteSelection, duplicateSelection,
   nudgeSelection, setBeatsForSelection, buildFromTemplate, saveAsTemplate, splitAtPlayhead, moveLayer,
 } from './actions.js';
 import { chooseTemplate, openTemplateDialog } from './template-ui.js';
@@ -188,6 +188,11 @@ export async function mountEditor(container, projectId, pending) {
       }
       case 't': case 'T': addText('title'); break;
       case 's': case 'S': splitAtPlayhead({ free: e.altKey }); break;
+      case ',': case '.': case ';': case ':':
+        // Image par image (1/30 s) pour placer une coupe au plus juste.
+        e.preventDefault();
+        setTime(store.time + ((e.key === '.' || e.key === ':') ? 1 : -1) / 30);
+        break;
       case ']': case '[': case '}': case '{':
         // Ordre des calques : [ descendre, ] monter ; avec Maj : tout en bas / tout en haut.
         if (store.sel.type === 'overlay') {
@@ -205,6 +210,7 @@ export async function mountEditor(container, projectId, pending) {
 
   loadAllFonts().then(() => emit('project', { source: 'fonts' }));
   loadProjectMusic();
+  loadProjectSounds();
 
   if (pending?.cfg) buildFromTemplate(pending.cfg, pending.files);
   else if (pending?.files?.length) importInto(pending.files);

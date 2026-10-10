@@ -142,6 +142,7 @@ async function runExport({ quality, fps, name, audio }) {
         file: p.music.file, start: p.music.start, volume: p.music.volume ?? 1, fadeOut: p.export.fadeOut,
         segments: musicSegments(p).map((s) => ({ from: s.from, to: s.to })),
       } : null,
+      sounds: p.sounds.map((s) => ({ file: s.file, at: s.start, volume: s.volume ?? 1 })),
     }));
 
     // Les images sont encodées en parallèle mais envoyées dans l'ordre, par paquets.

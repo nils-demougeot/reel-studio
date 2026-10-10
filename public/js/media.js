@@ -176,6 +176,41 @@ export async function importFiles(projectId, files, { onMedia, onAudio }) {
 
 // ---------- sources pour l'aperçu ----------
 
+// Durée avant la fin à laquelle on considère être sur la dernière image d'une vidéo.
+export const LAST_FRAME = 0.04;
+
+// Pilote une vidéo de l'aperçu. `frozen` : on a dépassé la fin du fichier → on reste sur la
+// dernière image, en pause, sans la relancer (sinon elle repart, s'arrête et clignote).
+function driveVideo(v, target, frozen, playing) {
+  if (playing && !frozen) {
+    if (v.paused) {
+      if (Math.abs(v.currentTime - target) > 0.05) v.currentTime = target;
+      v.play().catch(() => {});
+    } else if (Math.abs(v.currentTime - target) > 0.25) v.currentTime = target;
+  } else {
+    if (!v.paused) v.pause();
+    if (Math.abs(v.currentTime - target) > (frozen ? 0.06 : 0.02) && !v.seeking) v.currentTime = target;
+  }
+}
+
+// Garde une copie de l'image affichée après chaque positionnement, pour ne pas montrer
+// la miniature (ou rien) pendant que la vidéo cherche une autre image.
+function keepStill(v) {
+  if (!v.videoWidth) return;
+  const k = Math.min(1, 720 / Math.max(v.videoWidth, v.videoHeight));
+  const c = v.__still || document.createElement('canvas');
+  c.width = Math.round(v.videoWidth * k);
+  c.height = Math.round(v.videoHeight * k);
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  v.__still = c;
+}
+
+function videoImage(v) {
+  if (v.readyState >= 2) return { img: v, w: v.videoWidth, h: v.videoHeight };
+  if (v.__still) return { img: v.__still, w: v.videoWidth, h: v.videoHeight };
+  return null;
+}
+
 // Garde en mémoire un nombre limité d'images décodées autour de la tête de lecture.
 export class PreviewSources {
   constructor(onReady) {
@@ -277,8 +312,8 @@ export class PreviewSources {
       v.muted = true;
       v.preload = 'auto';
       v.playsInline = true;
-      v.addEventListener('seeked', () => this.onReady());
-      v.addEventListener('loadeddata', () => this.onReady());
+      v.addEventListener('seeked', () => { keepStill(v); this.onReady(); });
+      v.addEventListener('loadeddata', () => { keepStill(v); this.onReady(); });
       v.src = api.fileUrl(this.projectId, 'media', media.file);
       this.videos.set(media.id, v);
     }
@@ -288,16 +323,11 @@ export class PreviewSources {
   // Positionne la vidéo au bon moment (lecture continue ou recherche ponctuelle).
   syncVideo(clip, media, local) {
     const v = this.video(media);
-    const target = Math.min((clip.trim || 0) + local, Math.max(0, (media.duration || 0) - 0.05));
+    const last = Math.max(0, (media.duration || 0) - LAST_FRAME);
+    const raw = (clip.trim || 0) + local;
     if (this.activeVideo && this.activeVideo !== v) this.activeVideo.pause();
     this.activeVideo = v;
-    if (this.playing) {
-      if (v.paused) { v.currentTime = target; v.play().catch(() => {}); }
-      else if (Math.abs(v.currentTime - target) > 0.25) v.currentTime = target;
-    } else {
-      if (!v.paused) v.pause();
-      if (Math.abs(v.currentTime - target) > 0.02 && !v.seeking) v.currentTime = target;
-    }
+    driveVideo(v, Math.min(raw, last), raw >= last, this.playing);
     return v;
   }
 
@@ -313,8 +343,7 @@ export class PreviewSources {
     if (!media) return null;
     if (media.type === 'video') {
       const v = this.syncVideo(clip, media, local);
-      if (v.readyState >= 2) return { img: v, w: v.videoWidth, h: v.videoHeight };
-      return this.thumb(media);
+      return videoImage(v) || this.thumb(media);
     }
     const b = this.bitmaps.get(media.id);
     if (b instanceof ImageBitmap) return { img: b, w: b.width, h: b.height };
@@ -342,21 +371,15 @@ export class PreviewSources {
         v.muted = true;
         v.preload = 'auto';
         v.playsInline = true;
-        v.addEventListener('seeked', () => this.onReady());
-        v.addEventListener('loadeddata', () => this.onReady());
+        v.addEventListener('seeked', () => { keepStill(v); this.onReady(); });
+        v.addEventListener('loadeddata', () => { keepStill(v); this.onReady(); });
         v.src = api.fileUrl(this.projectId, 'media', ov.file);
         this.stickerVideos.set(ov.file, v);
       }
       this.usedStickerVideos.add(v);
-      const target = stickerTime(ov, local);
-      if (this.playing) {
-        if (v.paused) { v.currentTime = target; v.play().catch(() => {}); }
-        else if (Math.abs(v.currentTime - target) > 0.25) v.currentTime = target;
-      } else {
-        if (!v.paused) v.pause();
-        if (Math.abs(v.currentTime - target) > 0.02 && !v.seeking) v.currentTime = target;
-      }
-      return v.readyState >= 2 ? { img: v, w: v.videoWidth, h: v.videoHeight } : null;
+      const frozen = ov.loop === false && local >= (ov.duration || 0) - LAST_FRAME;
+      driveVideo(v, stickerTime(ov, local), frozen, this.playing);
+      return videoImage(v);
     }
     if (ov.kind === 'anim') {
       const a = this.anims.get(ov.file);
@@ -498,7 +521,7 @@ export class ExportSources {
     if (m.type === 'image') await this.loadImage(m, clip);
     else {
       const v = this.video(m);
-      await this.seek(v, Math.min((clip.trim || 0) + local, Math.max(0, (m.duration || 0) - 0.04)));
+      await this.seek(v, Math.min((clip.trim || 0) + local, Math.max(0, (m.duration || 0) - LAST_FRAME)));
     }
   }
 

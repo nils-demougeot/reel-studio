@@ -297,7 +297,7 @@ a { color: inherit; text-decoration: none; }
 .tl-ov-edge { width: 7px; align-self: stretch; cursor: ew-resize; flex: none; }
 .tl-ov-edge:hover { background: rgba(255, 255, 255, .35); }
 .tl-hint { position: absolute; left: 14px; top: 9px; font-size: 12px; color: var(--muted); white-space: nowrap; pointer-events: none; }
-.tl-music { height: 60px; cursor: grab; overflow: hidden; }
+.tl-music { height: 60px; cursor: pointer; overflow: hidden; }
 .tl-music.is-dragging { cursor: grabbing; }
 .tl-music-label { position: sticky; left: 0; display: inline-block; font-size: 11px; color: var(--muted); padding: 3px 14px; pointer-events: none; white-space: nowrap; }
 .tl-music-label strong { color: var(--music); font-weight: 600; }
@@ -402,3 +402,61 @@ a { color: inherit; text-decoration: none; }
 /* ---------- calques & stickers ---------- */
 .layer-row .btn { flex: 1 1 calc(50% - 6px); justify-content: flex-start; }
 .logo-preview video { max-height: 70px; max-width: 80%; }
+
+/* ---------- aimant & fenêtre musique ---------- */
+.tl-magnet.is-on { color: var(--accent); background: var(--accent-soft); }
+.tl-music-edit {
+  pointer-events: auto; margin-left: 8px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+  font-size: 11px; height: 18px; padding: 0 8px; border-radius: 9px; border: 1px solid var(--line-2);
+  background: var(--panel); color: var(--text);
+}
+.tl-music-edit:hover { border-color: var(--music); }
+.me-help { margin: 0 0 10px; font-size: 13px; }
+.me-wave { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 4px; cursor: crosshair; }
+.me-canvas { display: block; touch-action: none; }
+.me-info { font-size: 12px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.me-info .warn { color: var(--warn); }
+.me-sel { color: var(--text); }
+.me-actions { margin-top: 12px; align-items: center; }
+
+/* ---------- dégradés ---------- */
+.swatch-gradient { position: relative; }
+.swatch-stop { position: relative; overflow: hidden; width: 26px; height: 26px; border-radius: 6px; }
+.swatch-wide { width: 34px; border-radius: 6px; }
+.gradient-picker { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.gradient-row { display: flex; align-items: center; gap: 6px; }
+.gradient-preview { flex: 1; height: 14px; border-radius: 7px; border: 1px solid rgba(255, 255, 255, .15); min-width: 30px; }
+.gradient-row .segmented { flex: none; }
+
+/* ---------- effets sonores ---------- */
+.chip-sound .icon { color: #ffb020; }
+.dot-sound { background: #ffb020; }
+.tl-head-sounds .icon { color: #ffb020; }
+.tl-sounds { min-height: 32px; }
+.tl-snd {
+  position: absolute; height: 20px; border-radius: 5px; display: flex; align-items: center; cursor: grab; overflow: hidden;
+  font-size: 11px; font-weight: 500; background: rgba(255, 176, 32, .2); border: 1px solid rgba(255, 176, 32, .6);
+}
+.tl-snd.is-selected { background: #ffb020; color: #2a1c00; }
+.sfx-help { margin: 0 0 12px; font-size: 13px; }
+.sfx-columns { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 18px; }
+.sfx-group h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.sfx-group { margin-bottom: 4px; }
+.sfx-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.sfx-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+.sfx-row:last-child { border-bottom: 0; }
+.sfx-row:hover { background: var(--panel-2); }
+.sfx-name { flex: 1; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sfx-dur { font-size: 11px; font-variant-numeric: tabular-nums; }
+.sfx-row .btn-sm { height: 24px; }
+.sfx-mine-head { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+.sfx-mine-head h3 { margin: 0; }
+.sfx-empty { padding: 10px; margin: 0; font-size: 12px; }
+
+/* Partie d'un bloc au-delà de la fin réelle du fichier (dernière image figée) */
+.tl-overflow {
+  position: absolute; top: 0; bottom: 0; right: 0; pointer-events: none; z-index: 1;
+  border-left: 1px dashed rgba(255, 255, 255, .7);
+  background: repeating-linear-gradient(-45deg, rgba(15, 15, 17, .72) 0 4px, rgba(255, 255, 255, .14) 4px 8px);
+}
+.tl-ov .tl-overflow { border-radius: 0 4px 4px 0; }

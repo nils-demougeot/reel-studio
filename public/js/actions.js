@@ -4,6 +4,7 @@ import * as api from './api.js';
 import { store, commit, select, selectedClips, emit, setTime } from './store.js';
 import {
   newClip, newTextOverlay, newStickerOverlay, snapToBeat, beatLength, clipIndexAt, musicSegments, songTimeAt,
+  SNAP_PX, nearest, beatGrid, gridSubFor,
 } from './model.js';
 import { importFiles } from './media.js';
 import { importSticker, STICKER_ACCEPT } from './stickers.js';
@@ -16,6 +17,29 @@ export const player = new Player();
 
 // Musique décodée (non enregistrée dans le projet : recalculée à l'ouverture).
 export const music = { file: null, buffer: null, peaks: null };
+
+// Effets sonores décodés (fichier du projet -> AudioBuffer), pour l'aperçu.
+export const soundBuffers = new Map();
+
+export async function loadProjectSounds() {
+  const p = store.project;
+  if (!p) return;
+  for (const s of p.sounds) {
+    if (soundBuffers.has(s.file)) continue;
+    soundBuffers.set(s.file, null);
+    try {
+      soundBuffers.set(s.file, await decodeAudio(api.fileUrl(p.id, 'media', s.file)));
+      emit('sounds');
+    } catch (err) {
+      console.warn('Effet sonore illisible', s.file, err);
+    }
+  }
+}
+
+// Liste pour le lecteur : { buffer, at, volume }.
+export const soundsForPlayer = (p) => p.sounds
+  .map((s) => ({ buffer: soundBuffers.get(s.file), at: s.start, volume: s.volume ?? 1 }))
+  .filter((s) => s.buffer);
 
 export async function loadProjectMusic() {
   const m = store.project?.music;
@@ -180,6 +204,7 @@ export function deleteSelection() {
   if (type === 'music') { deleteMusicSegments(ids); return; }
   commit((p) => {
     if (type === 'clips') p.clips = p.clips.filter((c) => !set.has(c.id));
+    else if (type === 'sound') p.sounds = p.sounds.filter((s) => !set.has(s.id));
     else p.overlays = p.overlays.filter((o) => !set.has(o.id));
   });
   select(null);
@@ -187,8 +212,12 @@ export function deleteSelection() {
 
 // ---------- découpe ----------
 
-// Coupe à la tête de lecture, sur la piste active (médias ou musique).
-// `free` : coupe exacte, sans se caler sur la grille des temps.
+// Aimant actif ? (Alt inverse le réglage le temps d'une action.)
+export const magnetOn = (alt = false) => store.magnet !== alt;
+const snapTol = () => SNAP_PX / (store.pps || 90);
+
+// Coupe pile à la tête de lecture, sur la piste active (médias ou musique).
+// Avec l'aimant, la coupe se cale sur un temps de la musique seulement s'il est tout proche.
 export function splitAtPlayhead({ free = false } = {}) {
   if (store.activeTrack === 'music') return splitMusic(free);
   const p = store.project;
@@ -197,10 +226,12 @@ export function splitAtPlayhead({ free = false } = {}) {
   if (i < 0) return toast('Placez la tête de lecture sur un média pour le couper.');
   const clip = p.clips[i];
   const L = beatLength(p);
-  const exact = (store.time - starts[i]) / L;
-  // Calé sur le quart de temps le plus proche pour rester en rythme avec la musique.
-  let left = free ? exact : Math.round(exact * 4) / 4;
-  if (left <= 0 || left >= clip.beats) left = exact;
+  let t = store.time;
+  if (magnetOn(free)) {
+    const tol = snapTol();
+    t = nearest(t, beatGrid(p, t - tol, t + tol, gridSubFor(p, store.pps || 90)), tol);
+  }
+  const left = (t - starts[i]) / L;
   if (left * L < 0.04 || (clip.beats - left) * L < 0.04) return toast('Trop près du début ou de la fin du média.');
   const right = { ...clip, id: uid('c'), beats: clip.beats - left };
   if (p.media[clip.mediaId]?.type === 'video') right.trim = (clip.trim || 0) + left * L;
@@ -209,6 +240,7 @@ export function splitAtPlayhead({ free = false } = {}) {
     proj.clips.splice(i + 1, 0, right);
   });
   select('clips', [right.id]);
+  setTime(t);
 }
 
 function splitMusic(free) {
@@ -216,7 +248,7 @@ function splitMusic(free) {
   if (!p.music) return toast('Il n’y a pas de musique à couper.');
   let song = songTimeAt(p, store.time);
   if (song == null) return toast('La tête de lecture est après la fin de la musique.');
-  if (!free) song = snapToBeat(p, song);
+  if (magnetOn(free)) song = nearest(song, [snapToBeat(p, song)], snapTol());
   const segs = musicSegments(p);
   if (segs.some((s) => Math.abs(s.from - song) < 0.05 || Math.abs(s.to - song) < 0.05)) return toast('Il y a déjà une coupe à cet endroit.');
   if (!segs.some((s) => song > s.from && song < s.to)) return;
@@ -263,6 +295,12 @@ export function duplicateSelection() {
       p.clips.splice(last + 1, 0, ...copies);
     });
     select('clips', created);
+  } else if (type === 'sound') {
+    const s = store.project.sounds.find((x) => x.id === ids[0]);
+    if (!s) return;
+    const copy = { ...s, id: uid('a'), start: s.start + s.duration };
+    commit((p) => { p.sounds.push(copy); });
+    select('sound', [copy.id]);
   } else if (type === 'overlay') {
     const ov = store.project.overlays.find((o) => o.id === ids[0]);
     if (!ov) return;
@@ -526,4 +564,36 @@ export async function saveAsTemplate(name, description) {
   const tpl = captureTemplate(p, { name, description, musicFile, logoFiles });
   await api.saveTemplate(tpl);
   return tpl;
+}
+
+// ---------- effets sonores ----------
+
+// Ajoute un effet sonore à la tête de lecture. `source` : 'sfx' (fourni) ou 'sons' (ajouté par vous).
+export async function addSound(item, source = 'sfx') {
+  const p = store.project;
+  try {
+    const file = await api.copyFromLibrary(p.id, source, item.file);
+    const buffer = soundBuffers.get(file) || await decodeAudio(api.fileUrl(p.id, 'media', file));
+    soundBuffers.set(file, buffer);
+    let start = store.time;
+    // Avec l'aimant, un effet posé près d'une coupe démarre pile sur la coupe.
+    if (magnetOn()) start = nearest(start, [...store.tl.starts, store.tl.total], 12 / (store.pps || 90));
+    const sound = {
+      id: uid('a'), name: item.name, file, start: Math.max(0, start), volume: 1, duration: buffer.duration,
+    };
+    commit((proj) => { proj.sounds.push(sound); });
+    select('sound', [sound.id]);
+    emit('sounds');
+  } catch (err) {
+    console.error(err);
+    toast(`Effet sonore illisible : ${item.name}`, { type: 'warn' });
+  }
+}
+
+export function updateSound(id, patch, key) {
+  commit((p) => {
+    const s = p.sounds.find((x) => x.id === id);
+    if (!s) return false;
+    Object.assign(s, patch);
+  }, { key, source: key ? 'inspector' : null });
 }

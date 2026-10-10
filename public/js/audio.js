@@ -24,12 +24,25 @@ export class Player {
   }
 
   // `segments` : passages gardés de la musique (voir musicSegments), joués à la suite.
-  play(t0, music, segments = []) {
+  // `sounds` : effets sonores { buffer, at, volume } placés sur la timeline.
+  play(t0, music, segments = [], sounds = []) {
     const ac = audioContext();
     ac.resume();
     this.stop();
     this.t0 = t0;
     this.ctxStart = ac.currentTime + 0.06;
+    for (const s of sounds) {
+      if (s.at + s.buffer.duration <= t0) continue;
+      const skip = Math.max(0, t0 - s.at);
+      const g = ac.createGain();
+      g.gain.value = s.volume ?? 1;
+      g.connect(ac.destination);
+      const src = ac.createBufferSource();
+      src.buffer = s.buffer;
+      src.connect(g);
+      src.start(this.ctxStart + Math.max(0, s.at - t0), skip);
+      this.sources.push(src);
+    }
     if (!this.buffer || !music) return;
     this.gain = ac.createGain();
     this.gain.gain.value = music.volume ?? 1;

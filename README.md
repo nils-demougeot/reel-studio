@@ -21,6 +21,29 @@ Navigateur conseillé : Chrome ou Edge.
 
 Tout est enregistré automatiquement (indicateur « Enregistré » en haut). `Ctrl+Z` / `Ctrl+Y` pour annuler / rétablir.
 
+### Aimant, coupe précise
+
+Le bouton **Aimant** (à côté de Couper / Supprimer) fait s'accrocher coupes, durées, calques et sons aux temps de la
+musique et aux autres éléments, *seulement quand ils en sont tout proches*. Désactivé, tout se place au pixel près.
+`Alt` inverse l'aimant le temps d'un geste. Les touches `,` et `.` déplacent la tête de lecture d'une image.
+
+### Musique : choisir les passages
+
+*Choisir les passages* (panneau Musique, bouton de la piste Musique, ou double-clic dessus) affiche tout le morceau :
+glissez pour sélectionner, puis *Garder seulement ça*, *Ajouter* ou *Retirer*. Les parties gardées sont jouées à la suite.
+
+### Effets sonores
+
+Bouton **Son** au-dessus de l'aperçu : 17 effets fournis (whoosh, arrivée avec impact, montée, clic, appareil photo,
+pop, ding, paillettes, applaudissements…), à écouter avant de les placer. Vous pouvez importer les vôtres (« Mes sons »).
+Les effets fournis sont synthétisés par `tools/generate-sfx.mjs` (aucun droit d'auteur) ; ils sont aussi conservés
+dans l'export « sans musique ».
+
+### Couleurs et polices
+
+Chaque couleur (fond, carton, texte, fond du texte) peut être unie ou un **dégradé** (bouton à droite des pastilles).
+Polices : Montserrat, Inter, Bebas Neue, Bungee, Abril Fatface, Cinzel, Pacifico, Great Vibes, Permanent Marker.
+
 ### Stickers et calques
 
 Un **sticker** est une image, une image animée ou une vidéo posée par-dessus le montage (un logo est un sticker).
@@ -103,6 +126,9 @@ Aucune étape de compilation : modifiez un fichier, rechargez la page.
 | `public/js/templates.js` | Modèles fournis, application d'un modèle, capture d'un montage en modèle |
 | `public/js/template-ui.js` | Cartes et fenêtre de configuration des modèles |
 | `public/js/library.js` | Bibliothèque musicale et logos partagés |
+| `public/js/music-editor.js` | Fenêtre « Choisir les passages » de la musique |
+| `public/js/sound-picker.js` | Choix des effets sonores |
+| `tools/generate-sfx.mjs` | Génère la bibliothèque d'effets sonores `public/sfx` |
 | `public/js/stickers.js` | Import des stickers (détection des images animées, conversion) et décodage image par image |
 
 Les durées sont stockées en temps (beats) : changer le BPM recale tout le montage sur la musique.

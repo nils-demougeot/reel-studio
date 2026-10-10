@@ -1,0 +1,26 @@
+{
+  "id": "great-vibes",
+  "family": "Great Vibes",
+  "subsets": [
+    "cyrillic",
+    "cyrillic-ext",
+    "greek-ext",
+    "latin",
+    "latin-ext",
+    "vietnamese"
+  ],
+  "weights": [400],
+  "styles": ["normal"],
+  "defSubset": "latin",
+  "variable": false,
+  "lastModified": "2025-09-05",
+  "version": "v21",
+  "category": "handwriting",
+  "license": {
+    "type": "OFL-1.1",
+    "url": "https://openfontlicense.org",
+    "attribution": "Copyright 2010 The Great Vibes Pro Project Authors (https://github.com/googlefonts/great-vibes)"
+  },
+  "source": "https://github.com/google/fonts",
+  "type": "google"
+}

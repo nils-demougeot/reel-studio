@@ -8,9 +8,10 @@ import {
 import {
   music, setBpm, redetectTempo, shiftMusic, pickMusic, removeMusic, setBeatsForAll, setBeatsForSelection,
   updateSelectedClips, updateAllClips, duplicateSelection, deleteSelection, updateOverlay, replaceSticker, moveLayer,
-  useLibraryMusic, autoPassage, splitAtPlayhead, deleteMusicSegments, restoreFullMusic,
+  useLibraryMusic, autoPassage, splitAtPlayhead, deleteMusicSegments, restoreFullMusic, updateSound,
 } from './actions.js';
 import { openMusicLibrary } from './library.js';
+import { openMusicEditor } from './music-editor.js';
 
 // Choix d'une musique de la bibliothèque, placée directement sur son meilleur passage.
 const fromLibrary = () => openMusicLibrary({
@@ -18,6 +19,7 @@ const fromLibrary = () => openMusicLibrary({
 });
 import { TapTempo } from './audio.js';
 import { fileUrl } from './api.js';
+import { isGradient, cssPaint } from './render.js';
 import { h, icon, clamp, round, fmtTime, parseNumber, rafThrottle } from './util.js';
 
 // ---------- petits composants ----------
@@ -44,14 +46,42 @@ function slider({ min, max, step, value, format, onInput }) {
   return h('div', { class: 'slider' }, input, out);
 }
 
+const GRADIENT_PRESETS = [
+  ['#ff5b2e', '#ffd23f'], ['#ff4f9a', '#7c6cff'], ['#3aa0ff', '#22c08a'], ['#7c6cff', '#3aa0ff'],
+  ['#111111', '#7c6cff'], ['#ffd23f', '#ff4f9a'], ['#0f2027', '#2c5364'], ['#ffffff', '#ffd23f'],
+];
+const ANGLES = [{ id: 180, label: '↓' }, { id: 90, label: '→' }, { id: 135, label: '↘' }, { id: 45, label: '↗' }];
+
+// Couleur unie (pastilles + nuancier) ou dégradé (deux couleurs + direction).
 function colorPicker(value, onChange) {
-  const native = h('input', { type: 'color', class: 'color-native', value, oninput: () => onChange(native.value, true) });
-  return h('div', { class: 'swatches' },
+  const grad = isGradient(value);
+  const solid = grad ? value.g[0] : value;
+  const native = h('input', { type: 'color', class: 'color-native', value: /^#[0-9a-f]{6}$/i.test(solid) ? solid : '#ffffff', oninput: () => onChange(native.value, true) });
+  const swatches = h('div', { class: 'swatches' },
     SWATCHES.map((c) => h('button', {
-      class: `swatch ${c.toLowerCase() === String(value).toLowerCase() ? 'is-on' : ''}`,
+      class: `swatch ${!grad && c.toLowerCase() === String(value).toLowerCase() ? 'is-on' : ''}`,
       style: { background: c }, title: c, onclick: () => onChange(c),
     })),
-    h('label', { class: 'swatch swatch-custom', title: 'Autre couleur' }, native));
+    h('label', { class: 'swatch swatch-custom', title: 'Autre couleur' }, native),
+    h('button', {
+      class: `swatch swatch-gradient ${grad ? 'is-on' : ''}`, title: 'Dégradé',
+      style: { background: cssPaint(grad ? value : { g: [solid || '#ff5b2e', '#7c6cff'], a: 135 }) },
+      onclick: () => onChange(grad ? value.g[0] : { g: [/^#/.test(solid) ? solid : '#ff5b2e', '#7c6cff'], a: 180 }),
+    }));
+  if (!grad) return swatches;
+
+  const stop = (i) => {
+    const input = h('input', { type: 'color', class: 'color-native', value: value.g[i], oninput: () => onChange({ ...value, g: value.g.map((c, k) => (k === i ? input.value : c)) }, true) });
+    return h('label', { class: 'swatch swatch-stop', style: { background: value.g[i] }, title: i ? 'Couleur d’arrivée' : 'Couleur de départ' }, input);
+  };
+  return h('div', { class: 'gradient-picker' }, swatches,
+    h('div', { class: 'gradient-row' },
+      stop(0), h('span', { class: 'gradient-preview', style: { background: cssPaint(value) } }), stop(1),
+      segmented(ANGLES, value.a ?? 180, (a) => onChange({ ...value, a }), { small: true })),
+    h('div', { class: 'swatches' }, GRADIENT_PRESETS.map((g) => h('button', {
+      class: 'swatch swatch-wide', style: { background: cssPaint({ g, a: 135 }) }, title: 'Dégradé prêt à l’emploi',
+      onclick: () => onChange({ g: [...g], a: value.a ?? 180 }),
+    }))));
 }
 
 function numberInput(value, { step = 0.1, min, max, suffix, onChange, width = 72 }) {
@@ -94,7 +124,9 @@ export function createInspector() {
     let content;
     const ov = selectedOverlay();
     const clips = selectedClips();
-    if (store.sel.type === 'music' && p.music) content = musicCutPanel(p);
+    const snd = store.sel.type === 'sound' ? p.sounds.find((s) => s.id === store.sel.ids[0]) : null;
+    if (snd) content = soundPanel(p, snd);
+    else if (store.sel.type === 'music' && p.music) content = musicCutPanel(p);
     else if (ov?.type === 'text') content = textPanel(p, ov);
     else if (ov?.type === 'sticker') content = stickerPanel(p, ov);
     else if (clips.length) content = clipsPanel(p, clips);
@@ -138,8 +170,8 @@ export function createInspector() {
           h('button', { class: 'btn btn-icon btn-sm', title: '1 temps plus tard', onclick: () => shiftMusic(1) }, '+1'),
           h('button', { class: 'btn btn-icon btn-sm', title: '4 temps plus tard', onclick: () => shiftMusic(4) }, '+4')),
         h('div', { class: 'btn-row' },
+          h('button', { class: 'btn btn-sm btn-accent-soft', onclick: () => openMusicEditor() }, icon('scissors', 15), 'Choisir les passages'),
           h('button', { class: 'btn btn-ghost btn-sm', onclick: autoPassage, title: 'Place le début sur le refrain / drop le plus énergique' }, icon('wand', 15), 'Meilleur passage')),
-        hint('Ou glissez la forme d’onde dans la timeline pour choisir le passage.'),
         row('Volume', slider({
           min: 0, max: 1.5, step: 0.01, value: p.music.volume ?? 1, format: (v) => `${Math.round(v * 100)} %`,
           onInput: (v) => commit((q) => { q.music.volume = v; }, { key: 'music-vol', source: 'inspector' }),
@@ -166,7 +198,7 @@ export function createInspector() {
           h('button', { class: 'btn btn-ghost btn-sm', onclick: removeMusic }, 'Retirer')),
         p.music.removed.length ? h('div', { class: 'btn-row' },
           h('button', { class: 'btn btn-ghost btn-sm', onclick: restoreFullMusic }, `Rétablir la musique entière (${p.music.removed.length} passage${p.music.removed.length > 1 ? 's' : ''} supprimé${p.music.removed.length > 1 ? 's' : ''})`)) : null,
-        hint('Couper un passage : cliquez la piste Musique, placez la tête de lecture, « Couper » (S) aux deux bords, cliquez le morceau du milieu puis Suppr.'));
+        hint('« Choisir les passages » montre tout le morceau pour garder ou retirer des parties. On peut aussi couper directement dans la timeline (S).'));
     } else {
       musicSec = section('Musique',
         h('button', { class: 'btn btn-wide', onclick: fromLibrary }, icon('music', 16), 'Choisir dans la bibliothèque'),
@@ -191,11 +223,43 @@ export function createInspector() {
         ['Espace', 'Lecture / pause'], ['Clic, Maj+clic, Ctrl+clic', 'Sélectionner'], ['Ctrl+A', 'Tout sélectionner'],
         ['Glisser une vignette', 'Changer l\'ordre'], ['Glisser le bord d\'une vignette', 'Changer la durée'],
         ['1 à 5', 'Durée ¼ ½ 1 2 4 temps'], ['Alt+← / →', 'Déplacer la sélection'],
-        ['[ / ]', 'Calque : descendre / monter'], ['S', 'Couper à la tête de lecture'],
+        ['[ / ]', 'Calque : descendre / monter'], ['S', 'Couper à la tête de lecture'], [', / .', 'Reculer / avancer d’une image'],
+        ['Alt (en glissant)', 'Ignorer l’aimant'],
         ['Ctrl+D', 'Dupliquer'], ['Suppr', 'Supprimer'], ['Ctrl+Z / Ctrl+Y', 'Annuler / rétablir'], ['T', 'Ajouter un texte'],
       ].map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
 
     return [h('div', { class: 'insp-title' }, 'Projet'), rhythm, musicSec, images, help];
+  }
+
+  // ----- effet sonore -----
+  const soundPreview = new Audio();
+  function soundPanel(p, s) {
+    const playBtn = h('button', {
+      class: 'btn btn-ghost btn-sm',
+      onclick: () => {
+        if (!soundPreview.paused) { soundPreview.pause(); return; }
+        soundPreview.src = fileUrl(p.id, 'media', s.file);
+        soundPreview.volume = Math.min(1, s.volume ?? 1);
+        soundPreview.play().catch(() => {});
+      },
+    }, icon('play', 15), 'Écouter');
+    return [
+      h('div', { class: 'insp-title' }, h('span', { class: 'dot dot-sound' }), s.name),
+      section(null,
+        h('div', { class: 'btn-row' }, playBtn),
+        row('Volume', slider({
+          min: 0, max: 2, step: 0.01, value: s.volume ?? 1, format: (v) => `${Math.round(v * 100)} %`,
+          onInput: (v) => updateSound(s.id, { volume: v }, `snd-vol-${s.id}`),
+        })),
+        h('div', { class: 'insp-row' }, h('label', {}, 'Début'),
+          h('div', { class: 'insp-control' },
+            numberInput(round(s.start, 2), { step: 0.05, min: 0, suffix: 's', onChange: (v) => updateSound(s.id, { start: v }) }),
+            h('button', { class: 'btn btn-ghost btn-sm', onclick: () => updateSound(s.id, { start: store.time }) }, 'À la tête de lecture'))),
+        hint(`Durée : ${secs(s.duration)}. Glissez l’effet dans la piste « Sons » pour le déplacer ; avec l’aimant, il s’accroche aux coupes et aux temps.`)),
+      h('div', { class: 'btn-row insp-actions' },
+        h('button', { class: 'btn btn-ghost btn-sm', onclick: duplicateSelection }, icon('copy', 15), 'Dupliquer'),
+        h('button', { class: 'btn btn-ghost btn-sm btn-danger-text', onclick: deleteSelection }, icon('trash', 15), 'Supprimer')),
+    ];
   }
 
   // ----- passage de musique sélectionné -----
@@ -325,7 +389,7 @@ export function createInspector() {
         }, pr.label)))),
       section('Police',
         h('div', { class: 'font-grid' }, FONTS.map((f) => h('button', {
-          class: `font-btn ${f.id === ov.font ? 'is-on' : ''}`,
+          class: `font-btn ${f.id === font.id ? 'is-on' : ''}`,
           style: { fontFamily: `"${f.family}"`, fontWeight: String(f.weights.includes(700) ? 700 : 400) },
           onclick: () => updateOverlay(ov.id, { font: f.id, weight: f.weights.includes(ov.weight) ? ov.weight : f.weights[f.weights.length - 1] }),
         }, f.label))),

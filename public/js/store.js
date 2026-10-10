@@ -13,6 +13,8 @@ export const store = {
   tl: { starts: [], durs: [], total: 0 },
   sel: { type: null, ids: [], anchor: null },
   activeTrack: 'clips', // piste visée par « Couper » : 'clips' ou 'music'
+  magnet: localStorage.getItem('reel-magnet') !== '0', // aimant activé
+  pps: 90, // zoom de la timeline (pixels par seconde), pour l'aimant
   time: 0,
   playing: false,
   saveState: 'saved',
@@ -141,6 +143,12 @@ export function select(type, ids = [], anchor = null) {
   emit('select');
 }
 
+export function setMagnet(on) {
+  store.magnet = on;
+  try { localStorage.setItem('reel-magnet', on ? '1' : '0'); } catch { /* rien */ }
+  emit('magnet');
+}
+
 export function setActiveTrack(track) {
   if (store.activeTrack === track) return;
   store.activeTrack = track;
@@ -163,9 +171,8 @@ export function selectedOverlay() {
 function sanitizeSelection() {
   const { sel, project } = store;
   if (!sel.type) return;
-  const valid = new Set(sel.type === 'music'
-    ? musicSegments(project).map((s) => s.key)
-    : (sel.type === 'clips' ? project.clips : project.overlays).map((x) => x.id));
+  const pool = { clips: project.clips, overlay: project.overlays, sound: project.sounds }[sel.type] || [];
+  const valid = new Set(sel.type === 'music' ? musicSegments(project).map((s) => s.key) : pool.map((x) => x.id));
   const ids = sel.ids.filter((id) => valid.has(id));
   if (ids.length !== sel.ids.length) {
     store.sel = { type: ids.length ? sel.type : null, ids, anchor: ids.includes(sel.anchor) ? sel.anchor : ids[0] ?? null };
