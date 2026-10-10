@@ -215,42 +215,61 @@ export function findBestPassage(buffer, bpm, offset, duration) {
   const total = buffer.duration;
   if (duration >= total - offset - 1) return offset;
 
-  // Énergie (volume) et force des attaques (coups de batterie) toutes les 50 ms.
+  // Toutes les 50 ms : volume et basses (en dB, comme on les perçoit) et attaques.
   const step = 0.05;
   const n = Math.floor(total / step);
   const sr = buffer.sampleRate;
   const chs = [];
   for (let c = 0; c < Math.min(2, buffer.numberOfChannels); c++) chs.push(buffer.getChannelData(c));
-  const energy = new Float64Array(n);
+  const stride = 2;
+  const alpha = 1 - Math.exp(-2 * Math.PI * 150 / (sr / stride)); // passe-bas ~150 Hz
+  let lp = 0;
+  const volDb = new Float64Array(n);
+  const lowDb = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const a = Math.floor(i * step * sr), b = Math.floor((i + 1) * step * sr);
-    let e = 0, k = 0;
-    for (let j = a; j < b; j += 4) { for (const ch of chs) e += ch[j] * ch[j]; k++; }
-    energy[i] = e / Math.max(1, k * chs.length);
+    let e = 0, el = 0, k = 0;
+    for (let j = a; j < b; j += stride) {
+      let x = 0;
+      for (const ch of chs) x += ch[j];
+      x /= chs.length;
+      lp += alpha * (x - lp);
+      e += x * x; el += lp * lp; k++;
+    }
+    volDb[i] = 10 * Math.log10(e / Math.max(1, k) + 1e-10);
+    lowDb[i] = 10 * Math.log10(el / Math.max(1, k) + 1e-10);
   }
-  const ePrefix = new Float64Array(n + 1);
-  const fPrefix = new Float64Array(n + 1);
-  for (let i = 0; i < n; i++) {
-    const flux = i ? Math.max(0, Math.log1p(1000 * energy[i]) - Math.log1p(1000 * energy[i - 1])) : 0;
-    ePrefix[i + 1] = ePrefix[i] + energy[i];
-    fPrefix[i + 1] = fPrefix[i] + flux;
-  }
-  const meanOf = (prefix, s, e) => {
-    const i0 = Math.max(0, Math.floor(s / step)), i1 = Math.min(n, Math.floor(e / step));
-    return i1 > i0 ? (prefix[i1] - prefix[i0]) / (i1 - i0) : 0;
+  const prefix = (f) => {
+    const p = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) p[i + 1] = p[i] + f(i);
+    return p;
   };
-  const eAll = meanOf(ePrefix, 0, total) || 1;
-  const fAll = meanOf(fPrefix, 0, total) || 1;
-  const intensity = (s, e) => meanOf(ePrefix, s, e) / eAll + meanOf(fPrefix, s, e) / fAll;
+  const pVol = prefix((i) => volDb[i]);
+  const pLow = prefix((i) => lowDb[i]);
+  const pFlux = prefix((i) => (i ? Math.max(0, volDb[i] - volDb[i - 1]) : 0));
+  const meanOf = (p, s, e) => {
+    const i0 = Math.max(0, Math.floor(s / step)), i1 = Math.min(n, Math.floor(e / step));
+    return i1 > i0 ? (p[i1] - p[i0]) / (i1 - i0) : 0;
+  };
+  const vAll = meanOf(pVol, 0, total), lAll = meanOf(pLow, 0, total), fAll = meanOf(pFlux, 0, total) || 1;
+  // 6 dB au-dessus de la moyenne du morceau ≈ +1 point.
+  const intensity = (s, e) => (meanOf(pVol, s, e) - vAll) / 6 + (meanOf(pLow, s, e) - lAll) / 6 + meanOf(pFlux, s, e) / fAll;
 
-  let best = offset, bestScore = -Infinity;
+  // On ignore l'intro (8 premières mesures) pour repérer les montées d'énergie.
+  const candidates = [];
   for (let s = offset; s + duration <= total - 0.5; s += bar) {
     const body = intensity(s, s + duration);
-    const rise = intensity(s, s + 2 * bar) - intensity(s - 2 * bar, s);
-    const score = body + 0.5 * Math.max(0, rise);
-    if (score > bestScore) { bestScore = score; best = s; }
+    const rise = s - offset >= 8 * bar ? intensity(s, s + 2 * bar) - intensity(s - 2 * bar, s) : 0;
+    let score = body + 0.5 * Math.max(0, rise);
+    if (s + duration > total * 0.92) score -= 0.4; // la toute fin (outro, fondu)
+    candidates.push({ s, score });
   }
-  return best;
+  if (!candidates.length) return offset;
+  // Parmi les passages presque aussi forts que le meilleur, on prend le premier :
+  // c'est en général le premier refrain / drop, idéal pour un récap.
+  const top = Math.max(...candidates.map((c) => c.score));
+  const early = candidates.find((c) => c.score >= top - 0.3 && c.s - offset >= 8 * bar);
+  return (early || candidates.find((c) => c.score === top)).s;
 }
 
 // Analyse complète d'une musique de la bibliothèque.

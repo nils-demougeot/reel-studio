@@ -188,6 +188,16 @@ function libDir(kind) {
   return path.join(LIB_DIR, kind);
 }
 
+// Fichier de la bibliothèque sous son nom exact : les fichiers copiés à la main
+// gardent leurs espaces, accents, parenthèses… On refuse seulement les chemins.
+function libFile(kind, name) {
+  const base = String(name || '');
+  if (!base || base === '.' || base === '..' || base !== path.basename(base) || /[\\/:*?"<>|]/.test(base)) {
+    throw new HttpError(400, 'Nom de fichier invalide');
+  }
+  return path.join(libDir(kind), base);
+}
+
 // Les métadonnées (tempo, passage choisi…) sont dans un index.json par dossier.
 // Les écritures sont mises en file pour éviter que deux requêtes s'écrasent.
 let metaLock = Promise.resolve();
@@ -417,8 +427,8 @@ async function route(req, res) {
       if (c === 'files' && m === 'PUT') return sendJson(res, 200, { file: await receiveLibFile(req, b, url.searchParams.get('name')) });
       if (c === 'meta' && m === 'PATCH') {
         const { file, ...data } = await readJson(req);
-        if (!(await exists(path.join(libDir(b), safeName(file))))) throw new HttpError(404, 'Fichier introuvable');
-        await setLibMeta(b, safeName(file), data);
+        if (!(await exists(libFile(b, file)))) throw new HttpError(404, 'Fichier introuvable');
+        await setLibMeta(b, path.basename(libFile(b, file)), data);
         return sendJson(res, 200, { ok: true });
       }
       if (c === 'reveal' && m === 'POST') {
@@ -427,7 +437,7 @@ async function route(req, res) {
         return sendJson(res, 200, { ok: true });
       }
       if (c && c !== 'files' && m === 'DELETE') {
-        await moveToLibTrash(path.join(libDir(b), safeName(c)));
+        await moveToLibTrash(libFile(b, c));
         return sendJson(res, 200, { ok: true });
       }
     }
@@ -465,7 +475,7 @@ async function route(req, res) {
         const media = path.join(projectDir(b), 'media');
         const name = c === 'to-library'
           ? await copyInto(path.join(media, safeName(file)), libDir(kind), safeName(file).replace(/^logo-/, ''))
-          : await copyInto(path.join(libDir(kind), safeName(file)), media, safeName(file));
+          : await copyInto(libFile(kind, file), media, safeName(file));
         return sendJson(res, 200, { file: name });
       }
       if (b && c === 'transcode' && m === 'POST') {
@@ -519,7 +529,7 @@ async function route(req, res) {
   }
 
   if (parts[0] === 'lib' && parts.length === 3) {
-    return serveFile(req, res, path.join(libDir(parts[1]), safeName(parts[2])));
+    return serveFile(req, res, libFile(parts[1], parts[2]));
   }
 
   if (parts[0] === 'fonts' && parts.length === 3) {
