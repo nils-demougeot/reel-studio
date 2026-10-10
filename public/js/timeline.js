@@ -1,9 +1,10 @@
 // Timeline : vignettes des médias (sélection, réordonnancement, durée au bord),
 // calques (textes et stickers), musique avec forme d'onde et grille des temps.
 
-import { store, on, commit, select, setTime, setActiveTrack, setMagnet } from './store.js';
-import { beatLength, beatPhase, musicSegments, songTimeAt, SNAP_PX, nearest, beatGrid, gridSubFor } from './model.js';
-import { music, moveClipsTo, deleteSelection, shuffleClips, reverseClips, sortClips, splitAtPlayhead, magnetOn } from './actions.js';
+import { store, on, emit, commit, select, setTime, setActiveTrack, setMagnet } from './store.js';
+import { beatLength, beatPhase, musicSegments, songTimeAt, musicGainAt, SNAP_PX, nearest, beatGrid, gridSubFor, transitionById, transitionWindow } from './model.js';
+import { music, moveClipsTo, deleteSelection, shuffleClips, reverseClips, sortClips, splitAtPlayhead, magnetOn, setTransition } from './actions.js';
+import { TRANSITION_MIME } from './transition-menu.js';
 import { openMusicEditor } from './music-editor.js';
 import { cssPaint } from './render.js';
 import { fileUrl } from './api.js';
@@ -147,6 +148,19 @@ export function createTimeline() {
       }
       if (durs[i] * pps > 10) el.append(h('div', { class: 'tl-clip-edge', dataset: { edge: '1' } }));
       frag.append(el);
+    });
+    // Transitions : une pastille sur la coupe + une bande légère qui montre sa durée.
+    p.clips.forEach((c, k) => {
+      if (!c.transition || k >= p.clips.length - 1) return;
+      const cut = starts[k + 1];
+      const [pre, post] = transitionWindow(c.transition);
+      const def = transitionById(c.transition.type);
+      const sel = store.sel.type === 'transition' && store.sel.ids.includes(c.id);
+      frag.append(h('div', { class: 'tl-tr-band', style: { left: `${x(cut - pre)}px`, width: `${(pre + post) * pps}px` } }));
+      frag.append(h('div', {
+        class: `tl-tr ${sel ? 'is-selected' : ''}`, dataset: { id: c.id }, title: `Transition : ${def.label}`,
+        style: { left: `${x(cut)}px` },
+      }, h('span', {}, def.label.slice(0, 1))));
     });
     clipsTrack.replaceChildren(frag);
   }
@@ -295,7 +309,8 @@ export function createTimeline() {
       const i1 = Math.max(i0 + 1, Math.floor((songT + 2 / pps) * perSecond));
       let v = 0;
       for (let i = i0; i < i1 && i < data.length; i++) v = Math.max(v, data[i]);
-      const bh = Math.max(1, v * amp);
+      // Les fondus se voient : l'onde s'amincit là où le son baisse.
+      const bh = Math.max(1, v * amp * (t <= total ? musicGainAt(p, t, total, segs) : 1));
       g.fillStyle = t <= total ? colIn : colOut;
       g.fillRect(px, mid - bh, 1.5, bh * 2);
     }
@@ -381,6 +396,8 @@ export function createTimeline() {
   // Médias : sélection, réordonnancement, durée.
   clipsTrack.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
+    const trEl = e.target.closest('.tl-tr');
+    if (trEl) { e.stopPropagation(); select('transition', [trEl.dataset.id]); return; }
     const el = e.target.closest('.tl-clip');
     setActiveTrack('clips');
     if (!el) { select(null); scrub(e); return; }
@@ -445,6 +462,40 @@ export function createTimeline() {
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+  });
+
+  // Glisser-déposer d'une transition depuis le menu : la coupe la plus proche s'allume.
+  const cutUnder = (e) => {
+    const t = pointerT(e);
+    const { starts } = store.tl;
+    let best = -1, bd = Infinity;
+    for (let k = 0; k < starts.length - 1; k++) {
+      const d = Math.abs(starts[k + 1] - t);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  };
+  clipsTrack.addEventListener('dragover', (e) => {
+    if (![...e.dataTransfer.types].includes(TRANSITION_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const k = cutUnder(e);
+    if (k < 0) return;
+    marker.style.display = 'block';
+    marker.classList.add('is-transition');
+    marker.style.transform = `translateX(${x(store.tl.starts[k + 1]) - 1}px)`;
+  });
+  clipsTrack.addEventListener('dragleave', () => { marker.style.display = 'none'; marker.classList.remove('is-transition'); });
+  clipsTrack.addEventListener('drop', (e) => {
+    const type = e.dataTransfer.getData(TRANSITION_MIME);
+    marker.style.display = 'none';
+    marker.classList.remove('is-transition');
+    if (!type) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const k = cutUnder(e);
+    if (k >= 0) setTransition(k, type);
+    emit('transition-dropped');
   });
 
   // Bord droit d'une vignette : change la durée (de la sélection entière si la vignette en fait partie).

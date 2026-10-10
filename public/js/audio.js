@@ -25,7 +25,8 @@ export class Player {
 
   // `segments` : passages gardés de la musique (voir musicSegments), joués à la suite.
   // `sounds` : effets sonores { buffer, at, volume } placés sur la timeline.
-  play(t0, music, segments = [], sounds = []) {
+  // `fades` : { fadeIn, fadeOut, total } — fondus d'ouverture et de fin de la vidéo.
+  play(t0, music, segments = [], sounds = [], fades = {}) {
     const ac = audioContext();
     ac.resume();
     this.stop();
@@ -46,7 +47,20 @@ export class Player {
     if (!this.buffer || !music) return;
     this.gain = ac.createGain();
     this.gain.gain.value = music.volume ?? 1;
-    this.gain.connect(ac.destination);
+    // Fondus d'ouverture / de fin sur un étage séparé (le volume reste réglable en direct).
+    const master = ac.createGain();
+    master.connect(ac.destination);
+    this.gain.connect(master);
+    this.master = master;
+    const { fadeIn = 0, fadeOut = 0, total = Infinity } = fades;
+    const at = (vt) => this.ctxStart + Math.max(0, vt - t0);
+    const env = (vt) => Math.max(0, Math.min(1, fadeIn > 0 ? vt / fadeIn : 1, fadeOut > 0 ? (total - vt) / fadeOut : 1));
+    master.gain.setValueAtTime(env(t0), this.ctxStart);
+    if (fadeIn > 0 && t0 < fadeIn) master.gain.linearRampToValueAtTime(1, at(fadeIn));
+    if (fadeOut > 0 && Number.isFinite(total)) {
+      if (t0 < total - fadeOut) master.gain.setValueAtTime(1, at(total - fadeOut));
+      master.gain.linearRampToValueAtTime(0, at(total));
+    }
     const ramp = 0.008; // micro-fondu aux raccords pour éviter les clics
     for (const seg of segments) {
       const len = seg.to - seg.from;
@@ -58,9 +72,12 @@ export class Player {
       const src = ac.createBufferSource();
       const g = ac.createGain();
       src.buffer = this.buffer;
-      g.gain.setValueAtTime(0, when);
-      g.gain.linearRampToValueAtTime(1, when + ramp);
-      g.gain.setValueAtTime(1, Math.max(when + ramp, when + dur - ramp));
+      // Fondus d'entrée / de sortie du passage, en tenant compte d'une lecture lancée en cours de passage.
+      const fi = Math.max(ramp, seg.fadeIn || 0), fo = Math.max(ramp, seg.fadeOut || 0);
+      const envAt = (x) => Math.max(0, Math.min(1, x / fi, (len - x) / fo));
+      g.gain.setValueAtTime(envAt(skip), when);
+      if (skip < fi) g.gain.linearRampToValueAtTime(1, when + (fi - skip));
+      g.gain.setValueAtTime(1, Math.max(when + Math.max(0, fi - skip), when + (len - fo - skip)));
       g.gain.linearRampToValueAtTime(0, when + dur);
       src.connect(g).connect(this.gain);
       src.start(when, seg.from + skip, dur);
@@ -85,7 +102,9 @@ export class Player {
     }
     this.sources = [];
     this.gain?.disconnect();
+    this.master?.disconnect();
     this.gain = null;
+    this.master = null;
   }
 }
 

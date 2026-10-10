@@ -1,7 +1,7 @@
 // Rendu d'une image du reel à l'instant t.
 // Le même code sert à l'aperçu et à l'export : ce que vous voyez est ce que vous exportez.
 
-import { FRAME_W, clipIndexAt, fontById } from './model.js';
+import { FRAME_W, clipIndexAt, fontById, activeTransition } from './model.js';
 import { clamp } from './util.js';
 
 const MOTION_AMOUNT = 0.07;
@@ -31,8 +31,12 @@ export function drawFrame(ctx, W, H, project, tl, t, src, { still = null } = {})
   ctx.save();
   ctx.fillStyle = paint(ctx, project.settings.background || '#000000', 0, 0, W, H);
   ctx.fillRect(0, 0, W, H);
-  const i = clipIndexAt(tl, t);
-  if (i >= 0) drawClip(ctx, W, H, project.clips[i], t - tl.starts[i], tl.durs[i], src);
+  const tr = activeTransition(project, tl, t);
+  if (tr) drawTransition(ctx, W, H, project, tl, t, src, tr);
+  else {
+    const i = clipIndexAt(tl, t);
+    if (i >= 0) drawClip(ctx, W, H, project.clips[i], t - tl.starts[i], tl.durs[i], src);
+  }
   const boxes = [];
   for (const ov of project.overlays) {
     if (t < ov.start || t >= ov.end) continue;
@@ -44,6 +48,22 @@ export function drawFrame(ctx, W, H, project, tl, t, src, { still = null } = {})
   return boxes;
 }
 
+// Rectangle où la photo / vidéo est dessinée (cadrage, zoom, mouvement).
+function clipRect(W, H, clip, local, dur, s) {
+  const p = dur > 0 ? clamp(local / dur, 0, 1) : 0;
+  let z = clip.zoom || 1;
+  if (clip.motion === 'zoomIn') z *= 1 + MOTION_AMOUNT * p;
+  else if (clip.motion === 'zoomOut') z *= 1 + MOTION_AMOUNT * (1 - p);
+  const base = clip.fit === 'cover' ? Math.max(W / s.w, H / s.h) : Math.min(W / s.w, H / s.h);
+  const dw = s.w * base * z;
+  const dh = s.h * base * z;
+  const fx = clip.fx ?? 0.5, fy = clip.fy ?? 0.5;
+  // En mode « remplir », fx/fy choisissent la partie visible de l'image.
+  const dx = dw >= W ? (W - dw) * fx : (W - dw) / 2;
+  const dy = dh >= H ? (H - dh) * fy : (H - dh) / 2;
+  return { dx, dy, dw, dh };
+}
+
 function drawClip(ctx, W, H, clip, local, dur, src) {
   if (clip.kind === 'color') {
     ctx.fillStyle = paint(ctx, clip.color || '#111111', 0, 0, W, H);
@@ -52,10 +72,6 @@ function drawClip(ctx, W, H, clip, local, dur, src) {
   }
   const s = src.clip(clip, local);
   if (!s) return;
-  const p = dur > 0 ? clamp(local / dur, 0, 1) : 0;
-  let z = clip.zoom || 1;
-  if (clip.motion === 'zoomIn') z *= 1 + MOTION_AMOUNT * p;
-  else if (clip.motion === 'zoomOut') z *= 1 + MOTION_AMOUNT * (1 - p);
 
   if (clip.fit === 'blur') {
     // Fond : la même image, en remplissage, floutée et assombrie.
@@ -66,15 +82,133 @@ function drawClip(ctx, W, H, clip, local, dur, src) {
     ctx.drawImage(s.img, (W - bw) / 2, (H - bh) / 2, bw, bh);
     ctx.restore();
   }
-  const base = clip.fit === 'cover' ? Math.max(W / s.w, H / s.h) : Math.min(W / s.w, H / s.h);
-  const dw = s.w * base * z;
-  const dh = s.h * base * z;
-  const fx = clip.fx ?? 0.5, fy = clip.fy ?? 0.5;
-  // En mode « remplir », fx/fy choisissent la partie visible de l'image.
-  const dx = dw >= W ? (W - dw) * fx : (W - dw) / 2;
-  const dy = dh >= H ? (H - dh) * fy : (H - dh) / 2;
+  const { dx, dy, dw, dh } = clipRect(W, H, clip, local, dur, s);
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(s.img, dx, dy, dw, dh);
+}
+
+// ---------- transitions ----------
+
+const smooth = (x) => x * x * (3 - 2 * x);
+const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
+
+function drawTransition(ctx, W, H, project, tl, t, src, at) {
+  const { k, tr, c, pre, post } = at;
+  const A = project.clips[k], B = project.clips[k + 1];
+  const la = t - tl.starts[k], lb = Math.max(0, t - tl.starts[k + 1]);
+  const before = t < c;
+  const x = clamp((t - (c - pre)) / (pre + post), 0, 1); // avancement 0 → 1
+  const bell = clamp(1 - Math.abs(t - c) / (before ? pre : post), 0, 1); // 1 sur la coupe
+  const bg = project.settings.background || '#000000';
+
+  // Chaque média est dessiné comme un calque plein écran (fond compris).
+  const layer = (clip, local, dur, { alpha = 1, scale = 1, dx = 0, blur = 0 } = {}) => {
+    if (alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (dx) ctx.translate(dx, 0);
+    if (scale !== 1) { ctx.translate(W / 2, H / 2); ctx.scale(scale, scale); ctx.translate(-W / 2, -H / 2); }
+    if (blur > 0.5) ctx.filter = `blur(${blur.toFixed(1)}px)`;
+    ctx.fillStyle = paint(ctx, bg, 0, 0, W, H);
+    ctx.fillRect(0, 0, W, H);
+    drawClip(ctx, W, H, clip, local, dur, src);
+    ctx.restore();
+  };
+  const layerA = (o) => layer(A, la, tl.durs[k], o);
+  const layerB = (o) => layer(B, lb, tl.durs[k + 1], o);
+  const veil = (color, alpha) => {
+    if (alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = clamp(alpha, 0, 1);
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  };
+
+  switch (tr.type) {
+    case 'flash':
+    case 'black':
+      if (before) layerA(); else layerB();
+      veil(tr.type === 'black' ? '#000000' : '#ffffff', bell ** 1.4 * (tr.type === 'black' ? 1 : 0.95));
+      break;
+    case 'zoom': {
+      // Plongée accélérée dans A, puis B arrive en se posant.
+      if (before) {
+        const q = 1 - bell;
+        layerA({ scale: 1 + 0.45 * q * q, blur: q * W * 0.01 });
+      } else {
+        const q = 1 - bell;
+        layerB({ scale: 1 + 0.45 * (1 - smooth(q)), blur: (1 - q) * W * 0.01 });
+      }
+      veil('#ffffff', 0.18 * bell ** 3);
+      break;
+    }
+    case 'whip': {
+      // Panoramique filé : A part vers la gauche, B arrive par la droite, flou de vitesse au milieu.
+      const e = easeInOut(x);
+      const blur = Math.sin(Math.PI * x) * W * 0.03;
+      layerA({ dx: -e * W, blur });
+      layerB({ dx: (1 - e) * W, blur });
+      break;
+    }
+    case 'blur': {
+      const amount = bell * W * 0.035;
+      layerA({ blur: amount });
+      layerB({ alpha: smooth(x), blur: amount });
+      break;
+    }
+    case 'leak': {
+      // Fondu + brûlure de pellicule : halos chauds qui traversent l'image.
+      layerA();
+      layerB({ alpha: smooth(clamp((x - 0.25) / 0.5, 0, 1)) });
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = bell ** 1.2;
+      const g1 = ctx.createRadialGradient(W * (-0.3 + 1.6 * x), H * 0.35, 0, W * (-0.3 + 1.6 * x), H * 0.35, W * 0.95);
+      g1.addColorStop(0, 'rgba(255, 150, 60, 0.95)');
+      g1.addColorStop(0.5, 'rgba(255, 90, 60, 0.45)');
+      g1.addColorStop(1, 'rgba(255, 60, 60, 0)');
+      ctx.fillStyle = g1;
+      ctx.fillRect(0, 0, W, H);
+      const g2 = ctx.createRadialGradient(W * (1.2 - 1.3 * x), H * 0.78, 0, W * (1.2 - 1.3 * x), H * 0.78, W * 0.8);
+      g2.addColorStop(0, 'rgba(255, 80, 160, 0.75)');
+      g2.addColorStop(1, 'rgba(255, 80, 160, 0)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(255, 220, 160, 0.3)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+      break;
+    }
+    case 'cutout': {
+      // Flash, puis le sujet de A (détouré) reste un instant par-dessus B avant de s'effacer.
+      if (before) {
+        layerA();
+        veil('#ffffff', 0.9 * ((t - (c - pre)) / pre) ** 2);
+        break;
+      }
+      layerB();
+      const q = clamp((t - c) / post, 0, 1);
+      const cut = A.kind !== 'color' && src.cutout?.(A);
+      const sA = cut && src.clip(A, la);
+      if (cut && sA) {
+        const r = clipRect(W, H, A, la, tl.durs[k], sA);
+        const sc = 1 + 0.035 * q;
+        ctx.save();
+        ctx.globalAlpha = q < 0.6 ? 1 : 1 - (q - 0.6) / 0.4;
+        ctx.translate(r.dx + r.dw / 2, r.dy + r.dh / 2);
+        ctx.scale(sc, sc);
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(cut.img, -r.dw / 2, -r.dh / 2, r.dw, r.dh);
+        ctx.restore();
+      }
+      veil('#ffffff', 0.9 * clamp(1 - (t - c) / 0.15, 0, 1));
+      break;
+    }
+    default: // fondu enchaîné
+      layerA();
+      layerB({ alpha: smooth(x) });
+  }
 }
 
 // ---------- animations d'entrée / sortie ----------

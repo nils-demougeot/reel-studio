@@ -3,6 +3,7 @@
 import * as api from './api.js';
 import { naturalCompare, uid, progressToast, toast } from './util.js';
 import { decodeAnimated, frameAt, stickerTime, disposeAnimated } from './stickers.js';
+import { framePlan } from './model.js';
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|bmp)$/i;
 const VIDEO_EXT = /\.(mp4|m4v|mov|webm)$/i;
@@ -223,12 +224,14 @@ export class PreviewSources {
     this.stickerVideos = new Map(); // fichier -> HTMLVideoElement
     this.anims = new Map(); // fichier -> image animée décodée | 'loading' | 'static'
     this.usedStickerVideos = new Set();
+    this.usedVideos = new Set(); // vidéos de médias affichées dans l'image en cours
+    this.cutouts = new Map(); // mediaId -> HTMLImageElement (sujet détouré)
     this.order = [];
     this.loading = 0;
     this.queue = [];
     this.project = null;
     this.playing = false;
-    this.activeVideo = null;
+
   }
 
   setProject(project) {
@@ -243,7 +246,7 @@ export class PreviewSources {
     for (const v of this.stickerVideos.values()) { v.pause(); v.removeAttribute('src'); v.load(); }
     for (const a of this.anims.values()) if (typeof a === 'object') disposeAnimated(a);
     this.bitmaps.clear(); this.thumbs.clear(); this.videos.clear();
-    this.stickerImages.clear(); this.stickerVideos.clear(); this.anims.clear();
+    this.stickerImages.clear(); this.stickerVideos.clear(); this.anims.clear(); this.cutouts.clear();
     this.order = []; this.queue = [];
   }
 
@@ -325,15 +328,14 @@ export class PreviewSources {
     const v = this.video(media);
     const last = Math.max(0, (media.duration || 0) - LAST_FRAME);
     const raw = (clip.trim || 0) + local;
-    if (this.activeVideo && this.activeVideo !== v) this.activeVideo.pause();
-    this.activeVideo = v;
+    this.usedVideos.add(v);
     driveVideo(v, Math.min(raw, last), raw >= last, this.playing);
     return v;
   }
 
   setPlaying(playing) {
     this.playing = playing;
-    if (!playing && this.activeVideo) this.activeVideo.pause();
+    if (!playing) for (const v of this.videos.values()) v.pause();
     if (!playing) for (const v of this.stickerVideos.values()) v.pause();
   }
 
@@ -396,10 +398,11 @@ export class PreviewSources {
     return this.stickerImage(ov);
   }
 
-  beginFrame() { this.usedStickerVideos = new Set(); }
+  beginFrame() { this.usedStickerVideos = new Set(); this.usedVideos = new Set(); }
 
   // Met en pause les vidéos de stickers qui ne sont plus à l'écran.
   endFrame() {
+    for (const v of this.videos.values()) if (!this.usedVideos.has(v) && !v.paused) v.pause();
     for (const v of this.stickerVideos.values()) if (!this.usedStickerVideos.has(v) && !v.paused) v.pause();
   }
 
@@ -408,7 +411,22 @@ export class PreviewSources {
     const media = clip && this.project.media[clip.mediaId];
     if (media?.type !== 'video') return;
     const v = this.video(media);
-    if (v !== this.activeVideo && Math.abs(v.currentTime - (clip.trim || 0)) > 0.05 && !v.seeking) v.currentTime = clip.trim || 0;
+    if (!this.usedVideos.has(v) && Math.abs(v.currentTime - (clip.trim || 0)) > 0.05 && !v.seeking) v.currentTime = clip.trim || 0;
+  }
+
+  // Sujet détouré d'une photo (transition « Silhouette »), s'il a été calculé.
+  cutout(clip) {
+    const media = this.project.media[clip.mediaId];
+    if (!media?.cutout) return null;
+    let img = this.cutouts.get(media.id);
+    if (!img || img.dataset.file !== media.cutout) {
+      img = new Image();
+      img.dataset.file = media.cutout;
+      img.onload = () => this.onReady();
+      img.src = api.fileUrl(this.projectId, 'cutouts', media.cutout);
+      this.cutouts.set(media.id, img);
+    }
+    return img.complete && img.naturalWidth ? { img, w: img.naturalWidth, h: img.naturalHeight } : null;
   }
 }
 
@@ -423,9 +441,20 @@ export class ExportSources {
     this.ready = new Map(); // mediaId -> ImageBitmap
     this.videos = new Map();
     this.stickers = new Map(); // fichier -> { img } | { anim } | { video }
+    this.cutouts = new Map(); // mediaId -> HTMLImageElement
   }
 
   async init() {
+    // Sujets détourés pour les transitions « Silhouette ».
+    for (const c of this.project.clips) {
+      const m = this.project.media[c.mediaId];
+      if (c.transition?.type !== 'cutout' || !m?.cutout || this.cutouts.has(m.id)) continue;
+      // createImageBitmap : ne dépend pas de l'affichage de l'onglet (img.decode() peut attendre indéfiniment).
+      try {
+        const blob = await (await fetch(api.fileUrl(this.project.id, 'cutouts', m.cutout))).blob();
+        this.cutouts.set(m.id, await createImageBitmap(blob));
+      } catch { /* pas de sujet : la transition fera un flash */ }
+    }
     for (const ov of this.project.overlays) {
       if (ov.type !== 'sticker' || this.stickers.has(ov.file)) continue;
       const url = api.fileUrl(this.project.id, 'media', ov.file);
@@ -445,8 +474,7 @@ export class ExportSources {
       }
       // Élément <img> : fonctionne aussi pour le SVG, dessiné net à n'importe quelle taille.
       const img = new Image();
-      img.src = url;
-      await img.decode().catch(() => {});
+      await new Promise((res) => { img.onload = res; img.onerror = res; img.src = url; });
       this.stickers.set(ov.file, { img });
     }
   }
@@ -504,12 +532,19 @@ export class ExportSources {
   }
 
   // Prépare tout ce qu'il faut pour dessiner l'image du clip `index` à `local`.
-  async prepare(index, local) {
+  // Prépare tous les médias visibles à l'instant t (deux pendant une transition).
+  async prepareAt(tl, t) {
+    const plan = framePlan(this.project, tl, t);
+    const from = plan.length ? plan[0].index : 0;
+    for (const { index, local } of plan) await this.prepare(index, local, from);
+  }
+
+  async prepare(index, local, keepFrom = index) {
     const { clips, media } = this.project;
     const clip = clips[index];
     // Libère les images des clips déjà passés.
     for (const [id, bmp] of this.ready) {
-      const stillNeeded = clips.slice(index, index + 4).some((c) => c.mediaId === id);
+      const stillNeeded = clips.slice(keepFrom, index + 4).some((c) => c.mediaId === id);
       if (!stillNeeded) { bmp.close(); this.ready.delete(id); this.images.delete(id); }
     }
     for (let j = index + 1; j < Math.min(clips.length, index + 3); j++) {
@@ -536,6 +571,11 @@ export class ExportSources {
     return b ? { img: b, w: b.width, h: b.height } : null;
   }
 
+  cutout(clip) {
+    const b = this.cutouts.get(clip.mediaId);
+    return b ? { img: b, w: b.width, h: b.height } : null;
+  }
+
   sticker(ov, local) {
     const s = this.stickers.get(ov.file);
     if (!s) return null;
@@ -546,6 +586,7 @@ export class ExportSources {
 
   dispose() {
     for (const b of this.ready.values()) b.close();
+    for (const b of this.cutouts.values()) b.close();
     for (const s of this.stickers.values()) {
       if (s.anim) disposeAnimated(s.anim);
       if (s.video) { s.video.removeAttribute('src'); s.video.load(); }

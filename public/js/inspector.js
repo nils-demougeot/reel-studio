@@ -3,12 +3,13 @@
 import { store, on, commit, selectedClips, selectedOverlay, setTime } from './store.js';
 import {
   BEAT_CHOICES, FIT_MODES, MOTIONS, TEXT_STYLES, ANIMATIONS, TEXT_PRESETS, FONTS, SWATCHES,
-  beatLength, fontById, clipIndexAt, snapToBeat, introEnd, musicSegments,
+  beatLength, fontById, clipIndexAt, snapToBeat, introEnd, musicSegments, TRANSITIONS, transitionById,
 } from './model.js';
 import {
   music, setBpm, redetectTempo, shiftMusic, pickMusic, removeMusic, setBeatsForAll, setBeatsForSelection,
   updateSelectedClips, updateAllClips, duplicateSelection, deleteSelection, updateOverlay, replaceSticker, moveLayer,
   useLibraryMusic, autoPassage, splitAtPlayhead, deleteMusicSegments, restoreFullMusic, updateSound,
+  updateTransition, applyTransitionToAll, removeTransitions,
 } from './actions.js';
 import { openMusicLibrary } from './library.js';
 import { openMusicEditor } from './music-editor.js';
@@ -125,7 +126,9 @@ export function createInspector() {
     const ov = selectedOverlay();
     const clips = selectedClips();
     const snd = store.sel.type === 'sound' ? p.sounds.find((s) => s.id === store.sel.ids[0]) : null;
-    if (snd) content = soundPanel(p, snd);
+    const trClip = store.sel.type === 'transition' ? p.clips.find((c) => c.id === store.sel.ids[0] && c.transition) : null;
+    if (trClip) content = transitionPanel(p, trClip);
+    else if (snd) content = soundPanel(p, snd);
     else if (store.sel.type === 'music' && p.music) content = musicCutPanel(p);
     else if (ov?.type === 'text') content = textPanel(p, ov);
     else if (ov?.type === 'sticker') content = stickerPanel(p, ov);
@@ -176,10 +179,15 @@ export function createInspector() {
           min: 0, max: 1.5, step: 0.01, value: p.music.volume ?? 1, format: (v) => `${Math.round(v * 100)} %`,
           onInput: (v) => commit((q) => { q.music.volume = v; }, { key: 'music-vol', source: 'inspector' }),
         })),
+        row('Fondu début', slider({
+          min: 0, max: 5, step: 0.1, value: p.export.fadeIn || 0, format: (v) => (v ? secs(v) : 'aucun'),
+          onInput: (v) => commit((q) => { q.export.fadeIn = v; }, { key: 'fade-in', source: 'inspector' }),
+        })),
         row('Fondu final', slider({
-          min: 0, max: 5, step: 0.1, value: p.export.fadeOut, format: (v) => secs(v),
+          min: 0, max: 5, step: 0.1, value: p.export.fadeOut, format: (v) => (v ? secs(v) : 'aucun'),
           onInput: (v) => commit((q) => { q.export.fadeOut = v; }, { key: 'fade', source: 'inspector' }),
         })),
+        hint('Fondus du son au tout début et à la toute fin de la vidéo. Pour un fondu sur une coupe : cliquez le passage dans la piste Musique.'),
         row('Calage', slider({
           min: -0.25, max: 0.25, step: 0.005, value: 0, format: (v) => `${v > 0 ? '+' : ''}${Math.round(v * 1000)} ms`,
           onInput: (() => {
@@ -231,6 +239,39 @@ export function createInspector() {
     return [h('div', { class: 'insp-title' }, 'Projet'), rhythm, musicSec, images, help];
   }
 
+  // ----- transition -----
+  function transitionPanel(p, clip) {
+    const tr = clip.transition;
+    const def = transitionById(tr.type);
+    const k = p.clips.indexOf(clip);
+    const next = p.clips[k + 1];
+    const media = p.media[clip.mediaId];
+    let cutoutInfo = null;
+    if (tr.type === 'cutout') {
+      cutoutInfo = media?.type !== 'image'
+        ? hint('La Silhouette fonctionne avec une photo avant la coupe ; ici, elle fait un simple flash.')
+        : media.cutout ? hint('Sujet détouré prêt ✓ (détourage automatique, idéal avec une personne bien visible).')
+          : hint('Détourage du sujet en cours…');
+    }
+    return [
+      h('div', { class: 'insp-title' }, h('span', { class: 'dot dot-tr' }), `Transition · ${def.label}`),
+      section(null,
+        h('div', { class: 'tr-types' }, TRANSITIONS.map((t) => h('button', {
+          class: `chip ${t.id === tr.type ? 'is-on' : ''}`, title: t.desc,
+          onclick: () => updateTransition(clip.id, { type: t.id, dur: t.dur }),
+        }, t.label))),
+        hint(def.desc + (next ? '' : '.')),
+        cutoutInfo,
+        row('Durée', slider({
+          min: 0.15, max: 1.5, step: 0.05, value: tr.dur, format: (v) => secs(v),
+          onInput: (v) => updateTransition(clip.id, { dur: v }, `tr-dur-${clip.id}`),
+        }))),
+      h('div', { class: 'btn-row insp-actions' },
+        h('button', { class: 'btn btn-ghost btn-sm', onclick: () => applyTransitionToAll(tr.type, tr.dur) }, 'Appliquer à toutes les coupes'),
+        h('button', { class: 'btn btn-ghost btn-sm btn-danger-text', onclick: () => removeTransitions([clip.id]) }, icon('trash', 15), 'Supprimer')),
+    ];
+  }
+
   // ----- effet sonore -----
   const soundPreview = new Audio();
   function soundPanel(p, s) {
@@ -265,6 +306,11 @@ export function createInspector() {
   // ----- passage de musique sélectionné -----
   function musicCutPanel(p) {
     const segs = musicSegments(p).filter((s) => store.sel.ids.includes(s.key));
+    const keys = segs.map((s) => s.key);
+    const setSegFade = (side, v) => commit((q) => {
+      q.music.fades ||= {};
+      for (const k of keys) q.music.fades[k] = { ...q.music.fades[k], [side]: v };
+    }, { key: `segfade-${side}-${keys.join()}`, source: 'inspector' });
     const total = segs.reduce((a, s) => a + s.to - s.from, 0);
     return [
       h('div', { class: 'insp-title' }, icon('music', 16), 'Passage de musique'),
@@ -275,7 +321,22 @@ export function createInspector() {
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn btn-sm btn-danger-text btn-ghost', onclick: () => deleteMusicSegments(store.sel.ids) }, icon('trash', 15), `Supprimer ce passage (${secs(total)})`),
           h('button', { class: 'btn btn-ghost btn-sm', onclick: () => splitAtPlayhead() }, icon('scissors', 15), 'Couper ici (S)')),
-        hint('La suite de la musique se recolle juste après. Les coupes sont calées sur les temps : les photos restent dans le rythme.'),
+        hint('La suite de la musique se recolle juste après. Les coupes sont calées sur les temps : les photos restent dans le rythme.')),
+      section('Fondus de ce passage',
+        row('Entrée', slider({
+          min: 0, max: 4, step: 0.05, value: segs[0]?.fadeIn || 0, format: (v) => (v ? secs(v) : 'aucun'),
+          onInput: (v) => setSegFade('in', v),
+        })),
+        row('Sortie', slider({
+          min: 0, max: 4, step: 0.05, value: segs[0]?.fadeOut || 0, format: (v) => (v ? secs(v) : 'aucun'),
+          onInput: (v) => setSegFade('out', v),
+        })),
+        hint('Le son monte progressivement au début du passage et baisse avant sa coupe. La fin de la vidéo a aussi son propre fondu :'),
+        row('Fondu final', slider({
+          min: 0, max: 5, step: 0.1, value: p.export.fadeOut, format: (v) => (v ? secs(v) : 'aucun'),
+          onInput: (v) => commit((q) => { q.export.fadeOut = v; }, { key: 'fade', source: 'inspector' }),
+        }))),
+      section(null,
         p.music.removed.length ? h('div', { class: 'btn-row' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: restoreFullMusic }, 'Rétablir la musique entière')) : null),
     ];
   }

@@ -85,8 +85,8 @@ export function normalizeProject(p) {
     if (ov.type === 'logo') { ov.type = 'sticker'; ov.kind = 'image'; }
   }
   p.music = p.music || null;
-  if (p.music) { p.music.cuts ||= []; p.music.removed ||= []; }
-  p.export = { fps: 30, quality: 'high', fadeOut: 1.5, ...p.export };
+  if (p.music) { p.music.cuts ||= []; p.music.removed ||= []; p.music.fades ||= {}; }
+  p.export = { fps: 30, quality: 'high', fadeIn: 0, fadeOut: 1.5, ...p.export };
   return p;
 }
 
@@ -125,6 +125,51 @@ export function beatPhase(p) {
   const start = p.music ? p.music.start : 0;
   const ph = ((p.rhythm.offset - start) % L + L) % L;
   return ph;
+}
+
+// ---------- transitions ----------
+// Une transition est portée par le média qui SORT : clip.transition = { type, dur } (secondes).
+// Elle est centrée sur la coupe, sans décaler le rythme du montage.
+
+export const TRANSITIONS = [
+  { id: 'fade', label: 'Fondu', dur: 0.5, desc: 'Fondu enchaîné doux' },
+  { id: 'flash', label: 'Flash blanc', dur: 0.4, desc: 'Éclair blanc sur la coupe' },
+  { id: 'black', label: 'Flash noir', dur: 0.45, desc: 'Bref passage par le noir' },
+  { id: 'zoom', label: 'Zoom', dur: 0.35, desc: 'Plongée rapide dans l’image' },
+  { id: 'whip', label: 'Glissé', dur: 0.3, desc: 'Panoramique filé, très dynamique' },
+  { id: 'blur', label: 'Flou', dur: 0.5, desc: 'L’image se floute et cède la place' },
+  { id: 'leak', label: 'Lumière', dur: 0.7, desc: 'Brûlure de pellicule chaude' },
+  { id: 'cutout', label: 'Silhouette', dur: 0.9, desc: 'Flash : le sujet reste un instant sur l’image suivante (photos)' },
+];
+export const transitionById = (id) => TRANSITIONS.find((t) => t.id === id) || TRANSITIONS[0];
+
+// Temps couvert avant et après la coupe.
+export function transitionWindow(tr) {
+  return tr.type === 'cutout' ? [0.12, tr.dur] : [tr.dur / 2, tr.dur / 2];
+}
+
+// Transition en cours à l'instant t : { k (média sortant), tr, c (instant de la coupe), pre, post } ou null.
+export function activeTransition(p, tl, t) {
+  const i = clipIndexAt(tl, t);
+  if (i < 0) return null;
+  for (const k of [i - 1, i]) {
+    if (k < 0 || k >= p.clips.length - 1) continue;
+    const tr = p.clips[k].transition;
+    if (!tr) continue;
+    const c = tl.starts[k + 1];
+    const [pre0, post0] = transitionWindow(tr);
+    const pre = Math.min(pre0, tl.durs[k] * 0.9), post = Math.min(post0, tl.durs[k + 1] * 0.9);
+    if (t >= c - pre && t < c + post) return { k, tr, c, pre, post };
+  }
+  return null;
+}
+
+// Médias à afficher à l'instant t (deux pendant une transition) : [{ index, local }].
+export function framePlan(p, tl, t) {
+  const at = activeTransition(p, tl, t);
+  if (at) return [{ index: at.k, local: t - tl.starts[at.k] }, { index: at.k + 1, local: Math.max(0, t - tl.starts[at.k + 1]) }];
+  const i = clipIndexAt(tl, t);
+  return i >= 0 ? [{ index: i, local: t - tl.starts[i] }] : [];
 }
 
 // ---------- aimant ----------
@@ -183,11 +228,33 @@ export function musicSegments(p) {
     }
     for (const [from, to] of pieces) {
       const prev = segs[segs.length - 1];
-      segs.push({ from, to, at, key: from.toFixed(4), joined: Boolean(prev && Math.abs(prev.to - from) > eps) });
+      const key = from.toFixed(4);
+      const fade = m.fades?.[key] || {};
+      segs.push({
+        from, to, at, key, joined: Boolean(prev && Math.abs(prev.to - from) > eps),
+        fadeIn: Math.min(fade.in || 0, (to - from) / 2), fadeOut: Math.min(fade.out || 0, (to - from) / 2),
+      });
       at += to - from;
     }
   }
   return segs;
+}
+
+// Volume relatif (0 à 1) de la musique à l'instant t : fondus des passages + fondus d'ouverture et de fin.
+export function musicGainAt(p, t, total, segs = musicSegments(p)) {
+  let g = 1;
+  const fi = p.export.fadeIn || 0, fo = p.export.fadeOut || 0;
+  if (fi > 0 && t < fi) g *= t / fi;
+  if (fo > 0 && t > total - fo) g *= Math.max(0, (total - t) / fo);
+  for (const s of segs) {
+    const len = s.to - s.from;
+    if (t < s.at || t >= s.at + len) continue;
+    const x = t - s.at;
+    if (s.fadeIn > 0 && x < s.fadeIn) g *= x / s.fadeIn;
+    if (s.fadeOut > 0 && x > len - s.fadeOut) g *= (len - x) / s.fadeOut;
+    break;
+  }
+  return Math.max(0, Math.min(1, g));
 }
 
 // Moment du morceau joué à l'instant t de la vidéo (null après la fin de la musique).

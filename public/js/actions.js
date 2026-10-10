@@ -4,7 +4,7 @@ import * as api from './api.js';
 import { store, commit, select, selectedClips, emit, setTime } from './store.js';
 import {
   newClip, newTextOverlay, newStickerOverlay, snapToBeat, beatLength, clipIndexAt, musicSegments, songTimeAt,
-  SNAP_PX, nearest, beatGrid, gridSubFor,
+  SNAP_PX, nearest, beatGrid, gridSubFor, transitionById,
 } from './model.js';
 import { importFiles } from './media.js';
 import { importSticker, STICKER_ACCEPT } from './stickers.js';
@@ -105,7 +105,7 @@ export async function setMusicFile(file) {
     music.peaks = computePeaks(buffer);
     player.buffer = buffer;
     commit((proj) => {
-      proj.music = { file: name, name: file.name, duration: buffer.duration, start: 0, volume: 1, cuts: [], removed: [] };
+      proj.music = { file: name, name: file.name, duration: buffer.duration, start: 0, volume: 1, cuts: [], removed: [], fades: {} };
       if (tempo) {
         proj.rhythm.bpm = tempo.bpm;
         proj.rhythm.offset = tempo.offset;
@@ -202,6 +202,7 @@ export function deleteSelection() {
   if (!type) return;
   const set = new Set(ids);
   if (type === 'music') { deleteMusicSegments(ids); return; }
+  if (type === 'transition') { removeTransitions(ids); return; }
   commit((p) => {
     if (type === 'clips') p.clips = p.clips.filter((c) => !set.has(c.id));
     else if (type === 'sound') p.sounds = p.sounds.filter((s) => !set.has(s.id));
@@ -491,7 +492,7 @@ export async function useLibraryMusic(item, { start = null } = {}) {
   }
   setDecoded(name, buffer);
   commit((proj) => {
-    proj.music = { file: name, name: item.name, duration: buffer.duration, start: 0, volume: item.volume ?? 1, cuts: [], removed: [] };
+    proj.music = { file: name, name: item.name, duration: buffer.duration, start: 0, volume: item.volume ?? 1, cuts: [], removed: [], fades: {} };
     proj.rhythm.bpm = bpm;
     proj.rhythm.offset = offset;
     proj.music.start = snapToBeat(proj, start ?? 0);
@@ -596,4 +597,70 @@ export function updateSound(id, patch, key) {
     if (!s) return false;
     Object.assign(s, patch);
   }, { key, source: key ? 'inspector' : null });
+}
+
+// ---------- transitions ----------
+// La transition est portée par le média qui sort (clips[k]) et joue sur la coupe k → k+1.
+
+// Index de la coupe la plus proche de l'instant t (entre clips[k] et clips[k+1]).
+export function nearestCut(t) {
+  const { starts } = store.tl;
+  let best = -1, bd = Infinity;
+  for (let k = 0; k < starts.length - 1; k++) {
+    const d = Math.abs(starts[k + 1] - t);
+    if (d < bd) { bd = d; best = k; }
+  }
+  return best;
+}
+
+// Le sujet détouré est calculé une fois par photo, en arrière-plan.
+async function ensureCutout(clip) {
+  const p = store.project;
+  const m = p.media[clip.mediaId];
+  if (!m || m.type !== 'image' || m.cutout) return;
+  try {
+    const { file } = await fetch(`/api/projects/${p.id}/cutout`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mediaId: m.id }),
+    }).then((r) => (r.ok ? r.json() : Promise.reject(new Error('détourage impossible'))));
+    commit((proj) => { if (proj.media[m.id]) proj.media[m.id].cutout = file; }, { source: 'cutout' });
+  } catch (err) {
+    console.warn(err);
+    toast('Le sujet de cette photo n’a pas pu être détouré : la transition fera un simple flash.', { type: 'warn' });
+  }
+}
+
+export function setTransition(k, type, dur) {
+  const p = store.project;
+  if (k < 0 || k >= p.clips.length - 1) return;
+  const def = transitionById(type);
+  const id = p.clips[k].id;
+  commit((proj) => {
+    const c = proj.clips.find((x) => x.id === id);
+    c.transition = { type: def.id, dur: dur ?? def.dur };
+  });
+  select('transition', [id]);
+  if (def.id === 'cutout') ensureCutout(p.clips[k]);
+}
+
+export function updateTransition(id, patch, key) {
+  commit((p) => {
+    const c = p.clips.find((x) => x.id === id);
+    if (!c?.transition) return false;
+    Object.assign(c.transition, patch);
+  }, { key, source: key ? 'inspector' : null });
+  const c = store.project.clips.find((x) => x.id === id);
+  if (patch.type === 'cutout' && c) ensureCutout(c);
+}
+
+export function applyTransitionToAll(type, dur) {
+  commit((p) => {
+    p.clips.forEach((c, i) => { if (i < p.clips.length - 1) c.transition = { type, dur }; });
+  });
+  if (type === 'cutout') for (const c of store.project.clips) ensureCutout(c);
+}
+
+export function removeTransitions(ids) {
+  const set = new Set(ids);
+  commit((p) => { for (const c of p.clips) if (set.has(c.id)) delete c.transition; });
+  select(null);
 }

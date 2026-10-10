@@ -171,7 +171,8 @@ export function selectedOverlay() {
 function sanitizeSelection() {
   const { sel, project } = store;
   if (!sel.type) return;
-  const pool = { clips: project.clips, overlay: project.overlays, sound: project.sounds }[sel.type] || [];
+  const pool = { clips: project.clips, overlay: project.overlays, sound: project.sounds,
+    transition: project.clips.filter((c, i) => c.transition && i < project.clips.length - 1) }[sel.type] || [];
   const valid = new Set(sel.type === 'music' ? musicSegments(project).map((s) => s.key) : pool.map((x) => x.id));
   const ids = sel.ids.filter((id) => valid.has(id));
   if (ids.length !== sel.ids.length) {

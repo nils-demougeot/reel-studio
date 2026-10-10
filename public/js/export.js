@@ -139,8 +139,8 @@ async function runExport({ quality, fps, name, audio }) {
     ({ exportId } = await api.startExport(p.id, {
       fps, crf, name, duration: N / fps,
       music: p.music && audio !== 'without' ? {
-        file: p.music.file, start: p.music.start, volume: p.music.volume ?? 1, fadeOut: p.export.fadeOut,
-        segments: musicSegments(p).map((s) => ({ from: s.from, to: s.to })),
+        file: p.music.file, start: p.music.start, volume: p.music.volume ?? 1, fadeIn: p.export.fadeIn || 0, fadeOut: p.export.fadeOut,
+        segments: musicSegments(p).map((s) => ({ from: s.from, to: s.to, fadeIn: s.fadeIn, fadeOut: s.fadeOut })),
       } : null,
       sounds: p.sounds.map((s) => ({ file: s.file, at: s.start, volume: s.volume ?? 1 })),
     }));
@@ -158,8 +158,7 @@ async function runExport({ quality, fps, name, audio }) {
     for (let i = 0; i < N; i++) {
       if (cancelled) throw new Error('cancelled');
       const t = i / fps;
-      const idx = clipIndexAt(tl, t);
-      if (idx >= 0) await src.prepare(idx, t - tl.starts[idx]);
+      await src.prepareAt(tl, t);
       await src.prepareStickers(t);
       drawFrame(ctx, W, H, p, tl, t, src);
       queue.push(pool.encode(await createImageBitmap(canvas), 0.95));

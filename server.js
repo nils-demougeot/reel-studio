@@ -26,7 +26,7 @@ const LIB_KINDS = {
 const READ_ONLY_KINDS = new Set(['sfx']);
 const PORT = Number(process.env.PORT || 5173);
 const HOST = '127.0.0.1';
-const FILE_KINDS = new Set(['media', 'thumbs', 'proxies', 'exports']);
+const FILE_KINDS = new Set(['media', 'thumbs', 'proxies', 'exports', 'cutouts']);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -385,6 +385,82 @@ async function convertSticker(id, file, target) {
   return path.basename(out);
 }
 
+// ---------- détourage du sujet (transition « Silhouette ») ----------
+// Modèle U²-Net léger (u2netp, licence Apache 2.0) exécuté avec onnxruntime, sans Python.
+
+const MODEL_PATH = path.join(APP_DIR, 'models', 'u2netp.onnx');
+const NET = 320;
+let netSession = null;
+
+async function getNet() {
+  if (!netSession) {
+    const ort = await import('onnxruntime-node');
+    netSession = { ort, session: await ort.InferenceSession.create(MODEL_PATH) };
+  }
+  return netSession;
+}
+
+function ffmpegBuffer(args, input) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, args, { windowsHide: true });
+    const chunks = [];
+    let log = '';
+    proc.stdout.on('data', (d) => chunks.push(d));
+    proc.stderr.on('data', (d) => { log = (log + d).slice(-2000); });
+    proc.on('error', reject);
+    proc.on('close', (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`ffmpeg (${code}) ${log}`))));
+    if (input) proc.stdin.end(input); else proc.stdin.end();
+  });
+}
+
+// Crée cutouts/<mediaId>.png : la photo avec le fond rendu transparent.
+// La source est le proxy (déjà orienté correctement par le navigateur).
+const cutoutJobs = new Map();
+function makeCutout(id, mediaId) {
+  if (!/^[a-z0-9]+$/i.test(mediaId)) throw new HttpError(400, 'Média invalide');
+  const key = `${id}/${mediaId}`;
+  if (!cutoutJobs.has(key)) {
+    const job = (async () => {
+      const dir = projectDir(id);
+      const out = path.join(dir, 'cutouts', `${mediaId}.png`);
+      if (await exists(out)) return path.basename(out);
+      const src = path.join(dir, 'proxies', `${mediaId}.jpg`);
+      if (!(await exists(src))) throw new HttpError(404, 'Image introuvable');
+      if (!(await exists(MODEL_PATH))) throw new HttpError(500, 'Modèle de détourage absent (models/u2netp.onnx)');
+
+      const rgb = await ffmpegBuffer(['-v', 'error', '-i', src, '-vf', `scale=${NET}:${NET}:flags=bicubic`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1']);
+      const { ort, session } = await getNet();
+      const plane = NET * NET;
+      const data = new Float32Array(3 * plane);
+      let max = 1;
+      for (const v of rgb) if (v > max) max = v;
+      const mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225];
+      for (let i = 0; i < plane; i++) {
+        for (let c = 0; c < 3; c++) data[c * plane + i] = (rgb[i * 3 + c] / max - mean[c]) / std[c];
+      }
+      const result = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', data, [1, 3, NET, NET]) });
+      const pred = result[session.outputNames[0]].data;
+      let lo = Infinity, hi = -Infinity;
+      for (const v of pred) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      // Seuil doux : bords nets mais sans escalier.
+      const mask = Buffer.alloc(plane);
+      for (let i = 0; i < plane; i++) {
+        const v = (pred[i] - lo) / Math.max(1e-6, hi - lo);
+        mask[i] = Math.round(255 * Math.min(1, Math.max(0, (v - 0.2) / 0.6)));
+      }
+      await fsp.mkdir(path.dirname(out), { recursive: true });
+      await ffmpegBuffer(['-v', 'error', '-y', '-i', src,
+        '-f', 'rawvideo', '-pix_fmt', 'gray', '-s', `${NET}x${NET}`, '-i', 'pipe:0',
+        '-filter_complex', '[1:v][0:v]scale2ref=flags=bicubic[m][b];[m]boxblur=1[ms];[b][ms]alphamerge,format=rgba',
+        '-frames:v', '1', out], mask);
+      return path.basename(out);
+    })();
+    cutoutJobs.set(key, job);
+    job.catch(() => cutoutJobs.delete(key));
+  }
+  return cutoutJobs.get(key);
+}
+
 const exportsInProgress = new Map();
 
 async function startExport(id, opts) {
@@ -412,7 +488,7 @@ async function startExport(id, opts) {
       for (const sg of raw) {
         const from = Math.max(0, Number(sg.from) || 0), to = Number(sg.to) || 0;
         if (to - from < 0.01) continue;
-        segs.push({ from, to });
+        segs.push({ from, to, fadeIn: Math.max(0, Number(sg.fadeIn) || 0), fadeOut: Math.max(0, Number(sg.fadeOut) || 0) });
         acc += to - from;
         if (acc >= duration + 0.5) break;
       }
@@ -423,10 +499,12 @@ async function startExport(id, opts) {
         const fade = Math.min(duration, Math.max(0, Number(opts.music.fadeOut) || 0));
         segs.forEach((sg, i) => {
           const len = sg.to - sg.from;
+          const fi = Math.min(len / 2, Math.max(0.008, sg.fadeIn)), fo = Math.min(len / 2, Math.max(0.008, sg.fadeOut));
           graph.push(`[${mi}:a]atrim=start=${sg.from.toFixed(4)}:end=${sg.to.toFixed(4)},asetpts=PTS-STARTPTS,`
-            + `afade=t=in:st=0:d=0.008,afade=t=out:st=${Math.max(0, len - 0.008).toFixed(4)}:d=0.008[m${i}]`);
+            + `afade=t=in:st=0:d=${fi.toFixed(4)},afade=t=out:st=${Math.max(0, len - fo).toFixed(4)}:d=${fo.toFixed(4)}[m${i}]`);
         });
-        const tail = [`volume=${vol.toFixed(3)}`, 'afade=t=in:st=0:d=0.03'];
+        const fadeIn = Math.min(duration, Math.max(0.03, Number(opts.music.fadeIn) || 0));
+        const tail = [`volume=${vol.toFixed(3)}`, `afade=t=in:st=0:d=${fadeIn.toFixed(3)}`];
         if (fade > 0) tail.push(`afade=t=out:st=${(duration - fade).toFixed(3)}:d=${fade.toFixed(3)}`);
         tail.push('aformat=sample_rates=48000:channel_layouts=stereo');
         graph.push(`${segs.map((_, i) => `[m${i}]`).join('')}concat=n=${segs.length}:v=0:a=1,${tail.join(',')}[mus]`);
@@ -561,6 +639,10 @@ async function route(req, res) {
           ? await copyInto(path.join(media, safeName(file)), libDir(kind), safeName(file).replace(/^logo-/, ''))
           : await copyInto(libFile(kind, file), media, safeName(file));
         return sendJson(res, 200, { file: name });
+      }
+      if (b && c === 'cutout' && m === 'POST') {
+        const { mediaId } = await readJson(req);
+        return sendJson(res, 200, { file: await makeCutout(b, String(mediaId)) });
       }
       if (b && c === 'convert-sticker' && m === 'POST') {
         const { file, target } = await readJson(req);

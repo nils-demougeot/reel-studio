@@ -144,7 +144,7 @@ const expDecay = (t, d) => Math.exp(-t / d);
 
 // ---------- effets ----------
 
-function whoosh({ dur = 0.9, peakAt = 0.55, lo = 220, hi = 3200, panFrom = -0.8, panTo = 0.8 } = {}) {
+function whoosh({ dur = 0.9, peakAt = 0.55, lo = 220, hi = 3200, panFrom = -0.8, panTo = 0.8, mix = 0.14, tail = 0.5 } = {}) {
   const buf = stereo(dur);
   const pink = pinkNoise();
   const bp = new Biquad('bp'), lp = new Biquad('lp');
@@ -156,7 +156,7 @@ function whoosh({ dur = 0.9, peakAt = 0.55, lo = 220, hi = 3200, panFrom = -0.8,
     lp.set(300 + 1800 * env, 0.7);
     return (bp.run(s) * 1.4 + lp.run(s) * 0.6) * env ** 1.3;
   }, (t) => panFrom + (panTo - panFrom) * (t / dur));
-  return finish(reverb(buf, { mix: 0.14, tail: 0.5 }));
+  return finish(reverb(buf, { mix, tail }));
 }
 
 function swish() {
@@ -365,9 +365,149 @@ function reverse() {
   return finish(buf);
 }
 
+
+// ---------- effets courts (≤ 0,5 s) ----------
+
+function swishWind() {
+  const dur = 0.36, buf = stereo(dur);
+  const pink = pinkNoise();
+  const bp = new Biquad('bp'), hp = new Biquad('hp');
+  hp.set(500);
+  addMono(buf, 0, n(dur), (t) => {
+    const x = t / dur;
+    const env = x < 0.3 ? (x / 0.3) ** 1.6 : ((1 - x) / 0.7) ** 2.2;
+    bp.set(1300 + 3600 * Math.sin(Math.PI * Math.min(1, x * 1.4)), 1.3);
+    return bp.run(hp.run(pink())) * env * 1.6;
+  }, (t) => -0.7 + 1.4 * (t / dur));
+  return finish(reverb(buf, { mix: 0.08, room: 0.6, tail: 0.12 }));
+}
+
+function swooshShort() {
+  return whoosh({ dur: 0.4, peakAt: 0.5, lo: 300, hi: 3800, panFrom: 0.6, panTo: -0.6, mix: 0.06, tail: 0.08 });
+}
+
+function clickDry() {
+  const buf = stereo(0.04);
+  const bp = new Biquad('bp');
+  bp.set(4600, 8);
+  addMono(buf, 0, n(0.03), (t) => bp.run(t < 0.0008 ? white() : 0));
+  addMono(buf, 0, n(0.006), (t) => Math.sin(TAU * 1700 * t) * expDecay(t, 0.0012) * 0.4);
+  return finish(buf, { peak: 0.8 });
+}
+
+function tick() {
+  const buf = stereo(0.06);
+  addMono(buf, 0, n(0.05), (t) => (Math.sin(TAU * 2650 * t) * expDecay(t, 0.006) + Math.sin(TAU * 5300 * t) * 0.35 * expDecay(t, 0.003)) * Math.min(1, t / 0.0005));
+  return finish(buf, { peak: 0.75 });
+}
+
+function popShort() {
+  const buf = stereo(0.12);
+  let ph = 0;
+  addMono(buf, 0, n(0.1), (t) => {
+    ph += TAU * (300 + 900 * Math.exp(-t / 0.012)) / SR;
+    return Math.sin(ph) * expDecay(t, 0.02) * (1 - t / 0.1);
+  });
+  return finish(buf, { peak: 0.85 });
+}
+
+function bubble() {
+  const buf = stereo(0.2);
+  let ph = 0;
+  addMono(buf, 0, n(0.16), (t) => {
+    ph += TAU * (380 + 750 * (1 - Math.exp(-t / 0.03))) / SR;
+    return Math.sin(ph) * Math.min(1, t / 0.004) * expDecay(t, 0.04) * (1 - t / 0.16);
+  });
+  return finish(reverb(buf, { mix: 0.08, room: 0.5, damp: 0.5, tail: 0.08 }), { peak: 0.8 });
+}
+
+function fingerSnap() {
+  const buf = stereo(0.22);
+  const bp = new Biquad('bp');
+  bp.set(2300, 1.8);
+  addMono(buf, 0, n(0.04), (t) => bp.run(white()) * expDecay(t, 0.004) * 1.4);
+  addMono(buf, 0, n(0.08), (t) => Math.sin(TAU * 1450 * t) * expDecay(t, 0.012) * 0.35);
+  const lp = new Biquad('lp');
+  lp.set(350);
+  addMono(buf, 0, n(0.05), (t) => lp.run(white()) * expDecay(t, 0.01) * 0.6);
+  return finish(reverb(buf, { mix: 0.07, room: 0.55, damp: 0.5, tail: 0.1 }));
+}
+
+function woodTap() {
+  const buf = stereo(0.22);
+  for (const [f, a, dcy] of [[880, 1, 0.04], [2370, 0.45, 0.018], [4200, 0.2, 0.007]]) {
+    addMono(buf, 0, n(0.2), (t) => Math.sin(TAU * f * t) * a * expDecay(t, dcy) * Math.min(1, t / 0.0006));
+  }
+  return finish(buf, { peak: 0.8 });
+}
+
+function whip() {
+  const dur = 0.32, buf = stereo(dur);
+  const hp = new Biquad('hp'), bp = new Biquad('bp');
+  const crack = 0.13;
+  addMono(buf, 0, n(dur), (t) => {
+    if (t < crack) {
+      const x = t / crack;
+      hp.set(1500 + 6500 * x * x);
+      return hp.run(white()) * x ** 2.5 * 0.7;
+    }
+    bp.set(3200, 0.8);
+    return bp.run(white()) * expDecay(t - crack, 0.012) * 1.6;
+  }, (t) => (t < crack ? -0.5 + t / crack : 0.5));
+  return finish(reverb(buf, { mix: 0.1, room: 0.6, tail: 0.12 }));
+}
+
+function blip() {
+  const buf = stereo(0.14);
+  const tone = (f) => (t) => (Math.sin(TAU * f * t) + Math.sin(TAU * 3 * f * t) * 0.18) * Math.min(1, t / 0.002) * expDecay(t, 0.025);
+  addMono(buf, 0, n(0.05), tone(1320));
+  addMono(buf, 0.05, n(0.08), tone(1760));
+  return finish(buf, { peak: 0.65 });
+}
+
+function thump() {
+  const buf = stereo(0.36);
+  let ph = 0;
+  addMono(buf, 0, n(0.34), (t) => {
+    ph += TAU * (48 + 110 * Math.exp(-t / 0.03)) / SR;
+    return Math.tanh(Math.sin(ph) * expDecay(t, 0.09) * 2) * (1 - t / 0.34);
+  });
+  const hp = new Biquad('hp');
+  hp.set(2500);
+  addMono(buf, 0, n(0.004), () => hp.run(white()) * 0.5);
+  return finish(buf);
+}
+
+function riserShort() {
+  const dur = 0.5, buf = stereo(dur);
+  const pink = pinkNoise();
+  const bp = new Biquad('bp');
+  let ph = 0;
+  addMono(buf, 0, n(dur), (t) => {
+    const x = t / dur;
+    bp.set(500 + 6500 * x * x, 1);
+    ph = (ph + (300 * Math.pow(5, x)) / SR) % 1;
+    const env = x ** 2 * (x > 0.96 ? (1 - x) / 0.04 : 1);
+    return (bp.run(pink()) * 1.4 + (ph * 2 - 1) * 0.12) * env;
+  });
+  return finish(buf);
+}
+
 // ---------- catalogue ----------
 
 const EFFECTS = [
+  ['court-swish-vent', 'Swish de vent', 'Courts', swishWind],
+  ['court-swoosh', 'Swoosh court', 'Courts', swooshShort],
+  ['court-fouet', 'Fouet', 'Courts', whip],
+  ['court-montee', 'Montée courte', 'Courts', riserShort],
+  ['court-coup-sourd', 'Coup sourd', 'Courts', thump],
+  ['court-clic-sec', 'Clic sec', 'Courts', clickDry],
+  ['court-tic', 'Tic', 'Courts', tick],
+  ['court-pop', 'Pop court', 'Courts', popShort],
+  ['court-bulle', 'Bulle', 'Courts', bubble],
+  ['court-claquement', 'Claquement de doigts', 'Courts', fingerSnap],
+  ['court-bois', 'Tap bois', 'Courts', woodTap],
+  ['court-blip', 'Blip', 'Courts', blip],
   ['whoosh', 'Whoosh', 'Transitions', () => whoosh()],
   ['whoosh-long', 'Whoosh long', 'Transitions', () => whoosh({ dur: 1.6, peakAt: 0.6, lo: 160, hi: 2600, panFrom: 0.8, panTo: -0.8 })],
   ['swish', 'Swish rapide', 'Transitions', swish],

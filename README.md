@@ -32,9 +32,24 @@ musique et aux autres éléments, *seulement quand ils en sont tout proches*. D�
 *Choisir les passages* (panneau Musique, bouton de la piste Musique, ou double-clic dessus) affiche tout le morceau :
 glissez pour sélectionner, puis *Garder seulement ça*, *Ajouter* ou *Retirer*. Les parties gardées sont jouées à la suite.
 
+### Transitions
+
+Bouton **Transition** au-dessus de l'aperçu : 8 transitions avec aperçu animé — Fondu, Flash blanc, Flash noir,
+Zoom, Glissé, Flou, Lumière (brûlure de pellicule) et **Silhouette** (flash, le sujet de la photo reste un instant
+sur l'image suivante). Glissez-en une sur une coupe de la timeline, ou cliquez pour l'appliquer à la coupe la plus
+proche de la tête de lecture. Une pastille apparaît sur la coupe : cliquez-la pour changer le type, la durée, ou
+l'appliquer à toutes les coupes. La Silhouette détoure automatiquement le sujet (modèle `models/u2netp.onnx`,
+exécuté localement par `onnxruntime-node`).
+
+### Fondus du son
+
+Panneau Musique : *Fondu début* et *Fondu final* de la vidéo. Cliquez un passage de musique dans la timeline pour
+régler son fondu d'entrée et de sortie (par exemple juste avant une coupe). La forme d'onde montre les fondus.
+
 ### Effets sonores
 
-Bouton **Son** au-dessus de l'aperçu : 17 effets fournis (whoosh, arrivée avec impact, montée, clic, appareil photo,
+Bouton **Son** au-dessus de l'aperçu : 29 effets fournis, dont 12 très courts (≤ 0,5 s : swish de vent, clic sec,
+pop, bulle, claquement de doigts…), plus (whoosh, arrivée avec impact, montée, clic, appareil photo,
 pop, ding, paillettes, applaudissements…), à écouter avant de les placer. Vous pouvez importer les vôtres (« Mes sons »).
 Les effets fournis sont synthétisés par `tools/generate-sfx.mjs` (aucun droit d'auteur) ; ils sont aussi conservés
 dans l'export « sans musique ».
@@ -126,6 +141,8 @@ Aucune étape de compilation : modifiez un fichier, rechargez la page.
 | `public/js/templates.js` | Modèles fournis, application d'un modèle, capture d'un montage en modèle |
 | `public/js/template-ui.js` | Cartes et fenêtre de configuration des modèles |
 | `public/js/library.js` | Bibliothèque musicale et logos partagés |
+| `public/js/transition-menu.js` | Menu des transitions (aperçus animés, glisser-déposer) |
+| `models/u2netp.onnx` | Modèle de détourage du sujet (U²-Net léger, licence Apache 2.0) |
 | `public/js/music-editor.js` | Fenêtre « Choisir les passages » de la musique |
 | `public/js/sound-picker.js` | Choix des effets sonores |
 | `tools/generate-sfx.mjs` | Génère la bibliothèque d'effets sonores `public/sfx` |

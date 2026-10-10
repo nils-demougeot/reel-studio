@@ -7,6 +7,7 @@ import { clipIndexAt, FRAME_W, FRAME_H, FIT_MODES, musicSegments } from './model
 import { PreviewSources } from './media.js';
 import { player, addText, addSticker, addColorCard, updateAllClips, soundsForPlayer } from './actions.js';
 import { openSoundPicker } from './sound-picker.js';
+import { openTransitionMenu } from './transition-menu.js';
 import { h, icon, clamp, fmtTime, fmtTimePrecise, rafThrottle } from './util.js';
 
 const SNAP = 0.012;
@@ -14,11 +15,13 @@ const SNAP = 0.012;
 export const sources = new PreviewSources(() => requestRender());
 let requestRender = () => {};
 
+const playerFades = (p) => ({ fadeIn: p.export.fadeIn || 0, fadeOut: p.export.fadeOut || 0, total: store.tl.total });
+
 export function play() {
   const p = store.project;
   if (!p?.clips.length) return;
   if (store.time >= store.tl.total - 0.02) setTime(0);
-  player.play(store.time, p.music, musicSegments(p), soundsForPlayer(p));
+  player.play(store.time, p.music, musicSegments(p), soundsForPlayer(p), playerFades(p));
   sources.setPlaying(true);
   setPlaying(true);
   const loop = () => {
@@ -80,6 +83,7 @@ export function createPreview() {
     h('button', { class: 'btn btn-chip chip-logo', onclick: addSticker, title: 'Ajouter un sticker : logo, image, GIF animé ou vidéo' }, icon('sticker', 16), 'Sticker'),
     h('button', { class: 'btn btn-chip chip-card', onclick: addColorCard, title: 'Ajouter un carton de couleur' }, icon('card', 16), 'Carton'),
     h('button', { class: 'btn btn-chip chip-sound', onclick: openSoundPicker, title: 'Ajouter un effet sonore à la tête de lecture' }, icon('sound', 16), 'Son'),
+    h('button', { class: 'btn btn-chip chip-tr', onclick: (e) => openTransitionMenu(e.currentTarget), title: 'Transitions entre les médias' }, icon('transition', 16), 'Transition'),
     h('div', { class: 'spacer' }),
     fitSwitch,
     safeBtn);
@@ -233,15 +237,15 @@ export function createPreview() {
   on('project', (d) => {
     const p = store.project;
     if (d?.source === 'open') sources.reset();
-    const sig = `${p.music?.file}|${p.music?.start}|${p.rhythm.bpm}|${JSON.stringify(p.music?.removed)}|${JSON.stringify(p.music?.cuts)}|${JSON.stringify(p.sounds)}`;
-    if (store.playing && sig !== audioSig) player.play(store.time, p.music, musicSegments(p), soundsForPlayer(p));
+    const sig = `${p.music?.file}|${p.music?.start}|${p.rhythm.bpm}|${JSON.stringify(p.music?.removed)}|${JSON.stringify(p.music?.cuts)}|${JSON.stringify(p.sounds)}|${JSON.stringify(p.music?.fades)}|${p.export.fadeIn}|${p.export.fadeOut}`;
+    if (store.playing && sig !== audioSig) player.play(store.time, p.music, musicSegments(p), soundsForPlayer(p), playerFades(p));
     if (store.playing) player.setVolume(p.music?.volume ?? 1);
     audioSig = sig;
     renderFitSwitch();
     requestRender();
   });
   on('time', (d) => {
-    if (store.playing && !d?.fromPlayback) player.play(store.time, store.project.music, musicSegments(store.project), soundsForPlayer(store.project));
+    if (store.playing && !d?.fromPlayback) player.play(store.time, store.project.music, musicSegments(store.project), soundsForPlayer(store.project), playerFades(store.project));
     requestRender();
   });
   on('select', requestRender);
