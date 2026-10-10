@@ -7,6 +7,25 @@
  "Summer.mp3": {
   "bpm": 128,
   "offset": 0.1775,
-  "duration": 222.56325
+  "duration": 222.56325,
+  "highlight": 48.9275
+ },
+ "Sugar (feat. Francesco Yates).mp3": {
+  "bpm": 125,
+  "offset": 0.0225,
+  "duration": 222.72,
+  "highlight": 76.82250000000005
+ },
+ "The Nights.mp3": {
+  "bpm": 126,
+  "offset": 0.045,
+  "duration": 176.6584375,
+  "highlight": 62.90214285714286
+ },
+ "Where'd All the Time Go.mp3": {
+  "bpm": 111,
+  "offset": 0.3675,
+  "duration": 234.81575,
+  "highlight": 37.12425675675675
  }
 }
