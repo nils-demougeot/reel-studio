@@ -2,7 +2,7 @@
 
 import * as api from './api.js';
 import { BUILTIN_TEMPLATES, DURATION_CHOICES } from './templates.js';
-import { musicSelect, logoSelect } from './library.js';
+import { musicSelect, logoSelect, previewButton, stopPreview } from './library.js';
 import { filesFromDrop } from './media.js';
 import { h, icon, modal, pickFiles, confirmDialog } from './util.js';
 
@@ -95,6 +95,7 @@ export async function openTemplateDialog(tpl, { mode = 'create' } = {}) {
     const finish = (files) => {
       if (settled) return;
       settled = true;
+      stopPreview();
       const music = musicSel.value;
       if (music.kind === 'library' && music.item) localStorage.setItem('reel-last-music', music.item.file);
       localStorage.setItem('reel-last-title', titleInput.value.trim());
@@ -138,7 +139,8 @@ export async function openTemplateDialog(tpl, { mode = 'create' } = {}) {
       h('p', { class: 'muted tpl-intro' }, tpl.description || ''),
       usesText(tpl, '{titre}') ? field('Titre', titleInput) : null,
       usesText(tpl, '{sous-titre}') ? field('Sous-titre', subInput) : null,
-      field('Musique', musicSel.el),
+      field('Musique', h('div', { class: 'select-row' }, musicSel.el,
+        previewButton(() => (musicSel.value.kind === 'library' ? musicSel.value.item : null)))),
       field('Passage de la musique', seg(passageOpts, state.passage, (v) => { state.passage = v; })),
       field('Durée de la vidéo', seg(DURATION_CHOICES, state.target, (v) => { state.target = v; }),
         'Le rythme du modèle est conservé ; avec une durée, la vitesse des photos s\'adapte à leur nombre.'),
@@ -150,7 +152,7 @@ export async function openTemplateDialog(tpl, { mode = 'create' } = {}) {
       title: mode === 'create' ? `Nouveau reel — ${tpl.name}` : `Appliquer « ${tpl.name} »`,
       body,
       width: 520,
-      onClose: () => { if (!settled) { settled = true; resolve(null); } },
+      onClose: () => { stopPreview(); if (!settled) { settled = true; resolve(null); } },
       actions: mode === 'apply'
         ? [{ label: 'Annuler', onClick: (c) => c() }, { label: 'Appliquer', primary: true, onClick: () => finish(null) }]
         : [{ label: 'Annuler', onClick: (c) => c() }],

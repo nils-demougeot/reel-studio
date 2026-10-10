@@ -31,18 +31,75 @@ export async function ensureAnalyzed(item) {
   return Object.assign(item, meta);
 }
 
+// ---------- écoute d'un extrait ----------
+
+const DEMO_SECONDS = 20;
 const preview = new Audio();
 let previewFile = null;
+let previewBtn = null;
+let demoEnd = 0;
 
-function togglePreview(item, btn) {
-  document.querySelectorAll('.lib-play.is-on').forEach((b) => { b.classList.remove('is-on'); b.replaceChildren(icon('play', 14)); });
-  if (previewFile === item.file && !preview.paused) { preview.pause(); previewFile = null; return; }
-  preview.src = api.libUrl('musiques', item.file);
-  preview.currentTime = item.start || 0;
-  preview.play().catch(() => {});
+function resetPreviewButton() {
+  if (!previewBtn) return;
+  previewBtn.classList.remove('is-on', 'is-loading');
+  previewBtn.replaceChildren(icon('play', 14));
+  previewBtn = null;
+}
+
+export function stopPreview() {
+  preview.pause();
+  previewFile = null;
+  resetPreviewButton();
+}
+
+// L'extrait s'arrête après 20 s avec un petit fondu.
+preview.addEventListener('timeupdate', () => {
+  if (!previewFile) return;
+  const left = demoEnd - preview.currentTime;
+  preview.volume = Math.max(0, Math.min(1, left / 1.5));
+  if (left <= 0) stopPreview();
+});
+preview.addEventListener('ended', stopPreview);
+
+// Début de l'extrait : le passage le plus énergique (calculé une fois, puis mémorisé).
+async function highlightOf(item) {
+  if (item.highlight != null) return item.highlight;
+  const { meta } = await analyzeTrack(api.libUrl('musiques', item.file));
+  const update = { highlight: meta.highlight, ...(item.bpm ? {} : { bpm: meta.bpm, offset: meta.offset, duration: meta.duration }) };
+  Object.assign(item, update);
+  api.setLibraryMeta('musiques', item.file, update).catch(() => {});
+  return item.highlight;
+}
+
+export async function togglePreview(item, btn) {
+  if (previewFile === item.file) { stopPreview(); return; }
+  stopPreview();
   previewFile = item.file;
-  btn.classList.add('is-on');
+  previewBtn = btn;
+  btn.classList.add('is-on', 'is-loading');
   btn.replaceChildren(icon('pause', 14));
+  const start = await highlightOf(item).catch(() => 0);
+  if (previewFile !== item.file) return; // arrêté pendant l'analyse
+  preview.src = api.libUrl('musiques', item.file);
+  await new Promise((res) => { preview.onloadedmetadata = res; preview.onerror = res; });
+  preview.currentTime = start;
+  demoEnd = start + DEMO_SECONDS;
+  preview.volume = 1;
+  preview.play().catch(() => stopPreview());
+  btn.classList.remove('is-loading');
+}
+
+// Bouton « écouter » à placer à côté d'une liste de musiques.
+export function previewButton(getItem) {
+  const btn = h('button', {
+    class: 'btn btn-icon lib-play', title: `Écouter un extrait (${DEMO_SECONDS} s, passage le plus énergique)`,
+    onclick: () => {
+      const item = getItem();
+      if (item) togglePreview(item, btn);
+      else toast('Choisissez une musique de la bibliothèque pour l’écouter.');
+    },
+  }, icon('play', 14));
+  return btn;
 }
 
 // Fenêtre de gestion de la bibliothèque. `onPick(item)` ajoute un bouton « Utiliser ».
@@ -67,7 +124,7 @@ export function openMusicLibrary({ onPick } = {}) {
         h('div', { class: 'lib-name' }, item.name),
         bpm,
         h('span', { class: 'muted lib-dur' }, item.duration ? fmtTime(item.duration, false) : ''),
-        onPick ? h('button', { class: 'btn btn-sm btn-accent-soft', onclick: () => { preview.pause(); close(); onPick(item); } }, 'Utiliser') : null,
+        onPick ? h('button', { class: 'btn btn-sm btn-accent-soft', onclick: () => { stopPreview(); close(); onPick(item); } }, 'Utiliser') : null,
         h('button', {
           class: 'btn btn-icon btn-sm btn-danger-text', title: 'Retirer de la bibliothèque',
           onclick: async () => {
@@ -107,7 +164,7 @@ export function openMusicLibrary({ onPick } = {}) {
 
   const { close } = modal({
     title: 'Bibliothèque musicale', body, width: 620,
-    onClose: () => { alive = false; preview.pause(); previewFile = null; },
+    onClose: () => { alive = false; stopPreview(); },
     actions: [{ label: 'Fermer', onClick: (c) => c() }],
   });
   refresh();
@@ -150,6 +207,7 @@ export async function musicSelect({ extra = [], selected = null } = {}) {
   await fill(selected);
   let last = select.value;
   select.addEventListener('change', async () => {
+    stopPreview();
     if (select.value !== 'add') { last = select.value; return; }
     const files = await pickFiles({ accept: 'audio/*' });
     if (!files.length) { select.value = last; return; }

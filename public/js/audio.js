@@ -257,7 +257,8 @@ export function findBestPassage(buffer, bpm, offset, duration) {
 export async function analyzeTrack(url) {
   const buffer = await decodeAudio(url);
   const tempo = detectTempo(buffer) || { bpm: 120, offset: 0 };
-  return { buffer, meta: { bpm: tempo.bpm, offset: tempo.offset, duration: buffer.duration } };
+  const highlight = findBestPassage(buffer, tempo.bpm, tempo.offset, 20);
+  return { buffer, meta: { bpm: tempo.bpm, offset: tempo.offset, duration: buffer.duration, highlight } };
 }
 
 // ---------- tap tempo ----------
