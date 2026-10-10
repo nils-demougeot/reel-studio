@@ -2,7 +2,7 @@
 // historique (annuler / rétablir) et sauvegarde automatique.
 
 import * as api from './api.js';
-import { normalizeProject, computeTimeline } from './model.js';
+import { normalizeProject, computeTimeline, musicSegments } from './model.js';
 
 const HISTORY_LIMIT = 150;
 const listeners = {};
@@ -12,6 +12,7 @@ export const store = {
   project: null,
   tl: { starts: [], durs: [], total: 0 },
   sel: { type: null, ids: [], anchor: null },
+  activeTrack: 'clips', // piste visée par « Couper » : 'clips' ou 'music'
   time: 0,
   playing: false,
   saveState: 'saved',
@@ -136,6 +137,13 @@ export function redo() {
 
 export function select(type, ids = [], anchor = null) {
   store.sel = { type: ids.length ? type : null, ids: [...ids], anchor: anchor ?? ids[ids.length - 1] ?? null };
+  if (type === 'music' || type === 'clips') store.activeTrack = type;
+  emit('select');
+}
+
+export function setActiveTrack(track) {
+  if (store.activeTrack === track) return;
+  store.activeTrack = track;
   emit('select');
 }
 
@@ -155,8 +163,9 @@ export function selectedOverlay() {
 function sanitizeSelection() {
   const { sel, project } = store;
   if (!sel.type) return;
-  const pool = sel.type === 'clips' ? project.clips : project.overlays;
-  const valid = new Set(pool.map((x) => x.id));
+  const valid = new Set(sel.type === 'music'
+    ? musicSegments(project).map((s) => s.key)
+    : (sel.type === 'clips' ? project.clips : project.overlays).map((x) => x.id));
   const ids = sel.ids.filter((id) => valid.has(id));
   if (ids.length !== sel.ids.length) {
     store.sel = { type: ids.length ? sel.type : null, ids, anchor: ids.includes(sel.anchor) ? sel.anchor : ids[0] ?? null };

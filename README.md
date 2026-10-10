@@ -21,6 +21,15 @@ Navigateur conseillé : Chrome ou Edge.
 
 Tout est enregistré automatiquement (indicateur « Enregistré » en haut). `Ctrl+Z` / `Ctrl+Y` pour annuler / rétablir.
 
+### Couper un passage (photo, vidéo ou musique)
+
+1. Cliquez la piste à couper dans la timeline (**Médias** ou **Musique** : son nom passe en surbrillance).
+2. Placez la tête de lecture et cliquez **Couper** (touche `S`) aux deux bords du passage.
+3. Cliquez le morceau du milieu et appuyez sur `Suppr` : la suite se recolle automatiquement.
+
+Les coupes se calent sur la grille des temps (Alt pour une coupe libre), ce qui garde photos et musique en rythme.
+Une vidéo coupée reprend exactement là où elle a été coupée. *Rétablir la musique entière* (panneau Musique) annule toutes les coupes de la musique ; `Ctrl+Z` fonctionne aussi.
+
 ### Format des photos
 
 Par défaut, les photos et vidéos gardent leur format d'origine (**Adapter** : image entière, bandes noires).

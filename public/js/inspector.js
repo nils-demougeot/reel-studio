@@ -3,12 +3,12 @@
 import { store, on, commit, selectedClips, selectedOverlay, setTime } from './store.js';
 import {
   BEAT_CHOICES, FIT_MODES, MOTIONS, TEXT_STYLES, ANIMATIONS, TEXT_PRESETS, FONTS, SWATCHES,
-  beatLength, fontById, clipIndexAt, snapToBeat, introEnd,
+  beatLength, fontById, clipIndexAt, snapToBeat, introEnd, musicSegments,
 } from './model.js';
 import {
   music, setBpm, redetectTempo, shiftMusic, pickMusic, removeMusic, setBeatsForAll, setBeatsForSelection,
   updateSelectedClips, updateAllClips, duplicateSelection, deleteSelection, updateOverlay, replaceLogo,
-  useLibraryMusic, autoPassage,
+  useLibraryMusic, autoPassage, splitAtPlayhead, deleteMusicSegments, restoreFullMusic,
 } from './actions.js';
 import { openMusicLibrary } from './library.js';
 
@@ -94,7 +94,8 @@ export function createInspector() {
     let content;
     const ov = selectedOverlay();
     const clips = selectedClips();
-    if (ov?.type === 'text') content = textPanel(p, ov);
+    if (store.sel.type === 'music' && p.music) content = musicCutPanel(p);
+    else if (ov?.type === 'text') content = textPanel(p, ov);
     else if (ov?.type === 'logo') content = logoPanel(p, ov);
     else if (clips.length) content = clipsPanel(p, clips);
     else content = projectPanel(p);
@@ -162,7 +163,10 @@ export function createInspector() {
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn btn-ghost btn-sm', onclick: fromLibrary }, icon('music', 15), 'Bibliothèque'),
           h('button', { class: 'btn btn-ghost btn-sm', onclick: pickMusic }, 'Importer un fichier'),
-          h('button', { class: 'btn btn-ghost btn-sm', onclick: removeMusic }, 'Retirer')));
+          h('button', { class: 'btn btn-ghost btn-sm', onclick: removeMusic }, 'Retirer')),
+        p.music.removed.length ? h('div', { class: 'btn-row' },
+          h('button', { class: 'btn btn-ghost btn-sm', onclick: restoreFullMusic }, `Rétablir la musique entière (${p.music.removed.length} passage${p.music.removed.length > 1 ? 's' : ''} supprimé${p.music.removed.length > 1 ? 's' : ''})`)) : null,
+        hint('Couper un passage : cliquez la piste Musique, placez la tête de lecture, « Couper » (S) aux deux bords, cliquez le morceau du milieu puis Suppr.'));
     } else {
       musicSec = section('Musique',
         h('button', { class: 'btn btn-wide', onclick: fromLibrary }, icon('music', 16), 'Choisir dans la bibliothèque'),
@@ -191,6 +195,24 @@ export function createInspector() {
       ].map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
 
     return [h('div', { class: 'insp-title' }, 'Projet'), rhythm, musicSec, images, help];
+  }
+
+  // ----- passage de musique sélectionné -----
+  function musicCutPanel(p) {
+    const segs = musicSegments(p).filter((s) => store.sel.ids.includes(s.key));
+    const total = segs.reduce((a, s) => a + s.to - s.from, 0);
+    return [
+      h('div', { class: 'insp-title' }, icon('music', 16), 'Passage de musique'),
+      section(null,
+        segs.map((s) => h('div', { class: 'music-card' }, icon('scissors', 15),
+          h('span', { class: 'music-name' }, `${fmtTime(s.from)} → ${fmtTime(s.to)}`),
+          h('span', { class: 'muted' }, secs(s.to - s.from)))),
+        h('div', { class: 'btn-row' },
+          h('button', { class: 'btn btn-sm btn-danger-text btn-ghost', onclick: () => deleteMusicSegments(store.sel.ids) }, icon('trash', 15), `Supprimer ce passage (${secs(total)})`),
+          h('button', { class: 'btn btn-ghost btn-sm', onclick: () => splitAtPlayhead() }, icon('scissors', 15), 'Couper ici (S)')),
+        hint('La suite de la musique se recolle juste après. Les coupes sont calées sur les temps : les photos restent dans le rythme.'),
+        p.music.removed.length ? h('div', { class: 'btn-row' }, h('button', { class: 'btn btn-ghost btn-sm', onclick: restoreFullMusic }, 'Rétablir la musique entière')) : null),
+    ];
   }
 
   // ----- médias -----
@@ -250,6 +272,7 @@ export function createInspector() {
     }
 
     parts.push(h('div', { class: 'btn-row insp-actions' },
+      h('button', { class: 'btn btn-ghost btn-sm', onclick: () => splitAtPlayhead(), title: 'Coupe le média sous la tête de lecture (S)' }, icon('scissors', 15), 'Couper ici'),
       h('button', { class: 'btn btn-ghost btn-sm', onclick: duplicateSelection }, icon('copy', 15), 'Dupliquer'),
       h('button', { class: 'btn btn-ghost btn-sm btn-danger-text', onclick: deleteSelection }, icon('trash', 15), 'Supprimer')));
     return parts;

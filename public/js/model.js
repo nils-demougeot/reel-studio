@@ -72,6 +72,7 @@ export function normalizeProject(p) {
   p.clips = p.clips || [];
   p.overlays = p.overlays || [];
   p.music = p.music || null;
+  if (p.music) { p.music.cuts ||= []; p.music.removed ||= []; }
   p.export = { fps: 30, quality: 'high', fadeOut: 1.5, ...p.export };
   return p;
 }
@@ -118,6 +119,41 @@ export function snapToBeat(p, songTime) {
   let k = Math.round((songTime - p.rhythm.offset) / L);
   while (p.rhythm.offset + k * L < 0) k++;
   return p.rhythm.offset + k * L;
+}
+
+// ---------- musique découpée ----------
+// music.cuts : points de coupe (en secondes dans le morceau).
+// music.removed : passages supprimés [{ from, to }]. Les passages gardés s'enchaînent
+// à partir de music.start, sans trou.
+
+export function musicSegments(p) {
+  const m = p.music;
+  if (!m) return [];
+  const eps = 1e-3;
+  const bounds = [...new Set([m.start, ...(m.cuts || []).filter((c) => c > m.start + eps && c < m.duration - eps), m.duration])]
+    .sort((a, b) => a - b);
+  const removed = [...(m.removed || [])].sort((a, b) => a.from - b.from);
+  const segs = [];
+  let at = 0;
+  for (let i = 0; i < bounds.length - 1; i++) {
+    let pieces = [[bounds[i], bounds[i + 1]]];
+    for (const r of removed) {
+      pieces = pieces.flatMap(([a, b]) => (r.to <= a || r.from >= b ? [[a, b]] : [[a, r.from], [r.to, b]]))
+        .filter(([a, b]) => b - a > eps);
+    }
+    for (const [from, to] of pieces) {
+      const prev = segs[segs.length - 1];
+      segs.push({ from, to, at, key: from.toFixed(4), joined: Boolean(prev && Math.abs(prev.to - from) > eps) });
+      at += to - from;
+    }
+  }
+  return segs;
+}
+
+// Moment du morceau joué à l'instant t de la vidéo (null après la fin de la musique).
+export function songTimeAt(p, t, segs = musicSegments(p)) {
+  for (const s of segs) if (t < s.at + (s.to - s.from)) return s.from + Math.max(0, t - s.at);
+  return null;
 }
 
 // Fin de l'« intro » : la coupe entre deux médias la plus proche de 2 secondes.

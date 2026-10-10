@@ -361,16 +361,42 @@ async function startExport(id, opts) {
   const outFile = await uniquePath(outDir, `${safeName(opts.name || 'reel').replace(/\.mp4$/i, '')}.mp4`);
 
   const args = ['-y', '-hide_banner', '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0'];
-  let hasAudio = false;
+  // Musique : les passages gardés (après d'éventuelles coupes) sont recollés bout à bout.
+  let audioFilter = null;
   if (opts.music?.file) {
     const musicPath = path.join(dir, 'media', safeName(opts.music.file));
     if (await exists(musicPath)) {
-      hasAudio = true;
-      args.push('-ss', String(Math.max(0, Number(opts.music.start) || 0)), '-t', String(duration + 1), '-i', musicPath);
+      const start = Math.max(0, Number(opts.music.start) || 0);
+      const raw = Array.isArray(opts.music.segments) && opts.music.segments.length
+        ? opts.music.segments : [{ from: start, to: start + duration + 1 }];
+      const segs = [];
+      let acc = 0;
+      for (const sg of raw) {
+        const from = Math.max(0, Number(sg.from) || 0), to = Number(sg.to) || 0;
+        if (to - from < 0.01) continue;
+        segs.push({ from, to });
+        acc += to - from;
+        if (acc >= duration + 0.5) break;
+      }
+      if (segs.length) {
+        args.push('-i', musicPath);
+        const vol = Math.max(0, Number(opts.music.volume ?? 1));
+        const fade = Math.min(duration, Math.max(0, Number(opts.music.fadeOut) || 0));
+        const parts = segs.map((sg, i) => {
+          const len = sg.to - sg.from;
+          return `[1:a]atrim=start=${sg.from.toFixed(4)}:end=${sg.to.toFixed(4)},asetpts=PTS-STARTPTS,`
+            + `afade=t=in:st=0:d=0.008,afade=t=out:st=${Math.max(0, len - 0.008).toFixed(4)}:d=0.008[m${i}]`;
+        });
+        const tail = [`volume=${vol.toFixed(3)}`, 'afade=t=in:st=0:d=0.03'];
+        if (fade > 0) tail.push(`afade=t=out:st=${(duration - fade).toFixed(3)}:d=${fade.toFixed(3)}`);
+        audioFilter = `${parts.join(';')};${segs.map((_, i) => `[m${i}]`).join('')}concat=n=${segs.length}:v=0:a=1,${tail.join(',')}[aout]`;
+      }
     }
   }
+  const hasAudio = Boolean(audioFilter);
+  if (hasAudio) args.push('-filter_complex', audioFilter);
   args.push('-map', '0:v:0');
-  if (hasAudio) args.push('-map', '1:a:0');
+  if (hasAudio) args.push('-map', '[aout]');
   args.push(
     '-vf', 'scale=in_range=full:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709,format=yuv420p',
     '-c:v', 'libx264', '-preset', 'medium', '-crf', String(crf), '-profile:v', 'high',
@@ -378,13 +404,7 @@ async function startExport(id, opts) {
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
     '-r', String(fps),
   );
-  if (hasAudio) {
-    const vol = Math.max(0, Number(opts.music.volume ?? 1));
-    const fade = Math.min(duration, Math.max(0, Number(opts.music.fadeOut) || 0));
-    const filters = [`volume=${vol.toFixed(3)}`, 'afade=t=in:st=0:d=0.03'];
-    if (fade > 0) filters.push(`afade=t=out:st=${(duration - fade).toFixed(3)}:d=${fade.toFixed(3)}`);
-    args.push('-af', filters.join(','), '-c:a', 'aac', '-b:a', '256k', '-ar', '48000');
-  }
+  if (hasAudio) args.push('-c:a', 'aac', '-b:a', '256k', '-ar', '48000');
   args.push('-t', duration.toFixed(3), '-movflags', '+faststart', outFile);
 
   const proc = spawn(ffmpegPath, args, { windowsHide: true });

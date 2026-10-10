@@ -1,9 +1,9 @@
 // Timeline : vignettes des médias (sélection, réordonnancement, durée au bord),
 // pistes texte / logo, musique avec forme d'onde et grille des temps.
 
-import { store, on, commit, select, setTime } from './store.js';
-import { beatLength, beatPhase, snapToBeat } from './model.js';
-import { music, moveClipsTo, deleteSelection, shuffleClips, reverseClips, sortClips } from './actions.js';
+import { store, on, commit, select, setTime, setActiveTrack } from './store.js';
+import { beatLength, beatPhase, snapToBeat, musicSegments, songTimeAt } from './model.js';
+import { music, moveClipsTo, deleteSelection, shuffleClips, reverseClips, sortClips, splitAtPlayhead } from './actions.js';
 import { fileUrl } from './api.js';
 import { h, icon, clamp, rafThrottle, fmtTime } from './util.js';
 
@@ -30,11 +30,13 @@ export function createTimeline() {
   const scroller = h('div', { class: 'tl-scroll' }, content);
 
   const ovHead = h('div', { class: 'tl-head tl-head-ov' }, icon('text', 15), 'Textes');
+  const clipsHead = h('div', { class: 'tl-head tl-head-clips', title: 'Cliquer pour couper les médias', onclick: () => setActiveTrack('clips') }, icon('image', 15), 'Médias');
+  const musicHead = h('div', { class: 'tl-head tl-head-music', title: 'Cliquer pour couper la musique', onclick: () => setActiveTrack('music') }, icon('music', 15), 'Musique');
   const heads = h('div', { class: 'tl-heads' },
     h('div', { class: 'tl-head tl-head-ruler' }),
-    h('div', { class: 'tl-head tl-head-clips' }, icon('image', 15), 'Médias'),
+    clipsHead,
     ovHead,
-    h('div', { class: 'tl-head tl-head-music' }, icon('music', 15), 'Musique'));
+    musicHead);
 
   const selInfo = h('span', { class: 'tl-info' });
   const zoomInput = h('input', {
@@ -46,12 +48,16 @@ export function createTimeline() {
     onchange: () => { if (sortMenu.value) sortClips(sortMenu.value); sortMenu.value = ''; },
   }, h('option', { value: '' }, 'Trier…'), h('option', { value: 'name' }, 'Par nom'), h('option', { value: 'date' }, 'Par date'));
 
+  const cutBtn = h('button', {
+    class: 'btn btn-ghost btn-sm tl-cut', onclick: (e) => splitAtPlayhead({ free: e.altKey }),
+  }, icon('scissors', 15), 'Couper');
   const toolbar = h('div', { class: 'tl-toolbar' },
     selInfo,
     h('button', { class: 'btn btn-ghost btn-sm', onclick: () => select('clips', store.project.clips.map((c) => c.id)), title: 'Ctrl+A' }, 'Tout sélectionner'),
     h('button', { class: 'btn btn-ghost btn-sm', onclick: shuffleClips, title: 'Mélanger (la sélection, ou tout)' }, icon('shuffle', 15), 'Mélanger'),
     h('button', { class: 'btn btn-ghost btn-sm', onclick: reverseClips, title: 'Inverser l\'ordre' }, icon('reverse', 15), 'Inverser'),
     sortMenu,
+    cutBtn,
     h('button', { class: 'btn btn-ghost btn-sm', onclick: deleteSelection, title: 'Supprimer (Suppr)' }, icon('trash', 15), 'Supprimer'),
     h('div', { class: 'spacer' }),
     h('button', { class: 'btn btn-icon btn-sm', onclick: () => setZoom(pps / 1.4), title: 'Dézoomer' }, icon('zoomout', 16)),
@@ -206,20 +212,30 @@ export function createTimeline() {
       musicLabel.replaceChildren(h('span', { class: 'tl-hint-inline' }, 'Aucune musique — glissez un fichier audio ou utilisez le panneau de gauche'));
       return;
     }
-    musicLabel.replaceChildren(h('strong', {}, p.music.name), h('span', {}, ' · glisser pour choisir le passage'));
+    const cut = p.music.removed.length ? ` · ${p.music.removed.length} passage${p.music.removed.length > 1 ? 's' : ''} supprimé${p.music.removed.length > 1 ? 's' : ''}` : '';
+    musicLabel.replaceChildren(h('strong', {}, p.music.name), h('span', {}, ` · glisser pour choisir le passage, cliquer pour sélectionner${cut}`));
     if (!music.peaks) return;
     const { data, perSecond } = music.peaks;
     const sl = scroller.scrollLeft;
     const mid = hgt / 2 + 6;
     const amp = hgt / 2 - 10;
     const total = store.tl.total;
+    const segs = musicSegments(p);
     const colIn = css.getPropertyValue('--music');
     const colOut = css.getPropertyValue('--music-dim');
+
+    // Passage sélectionné
+    const selKeys = store.sel.type === 'music' ? store.sel.ids : [];
+    for (const sg of segs) {
+      if (!selKeys.includes(sg.key)) continue;
+      g.fillStyle = css.getPropertyValue('--accent-soft');
+      g.fillRect(x(sg.at) - sl, 0, (sg.to - sg.from) * pps, hgt);
+    }
     for (let px = 0; px < w; px += 2) {
       const t = tAt(px + sl);
       if (t < 0) continue;
-      const songT = p.music.start + t;
-      if (songT > p.music.duration) break;
+      const songT = songTimeAt(p, t, segs);
+      if (songT == null) break;
       const i0 = Math.floor(songT * perSecond);
       const i1 = Math.max(i0 + 1, Math.floor((songT + 2 / pps) * perSecond));
       let v = 0;
@@ -227,6 +243,13 @@ export function createTimeline() {
       const bh = Math.max(1, v * amp);
       g.fillStyle = t <= total ? colIn : colOut;
       g.fillRect(px, mid - bh, 1.5, bh * 2);
+    }
+    // Repères : coupe (trait blanc) ou raccord après un passage supprimé (trait orange).
+    for (const sg of segs.slice(1)) {
+      const px = Math.round(x(sg.at) - sl);
+      if (px < -2 || px > w + 2) continue;
+      g.fillStyle = sg.joined ? css.getPropertyValue('--accent') : css.getPropertyValue('--text');
+      g.fillRect(px - (sg.joined ? 1 : 0), 0, sg.joined ? 3 : 1.5, hgt);
     }
   }
 
@@ -237,13 +260,26 @@ export function createTimeline() {
   function renderInfo() {
     const p = store.project;
     const n = store.sel.type === 'clips' ? store.sel.ids.length : 0;
+    if (store.sel.type === 'music') {
+      selInfo.textContent = 'Passage de musique sélectionné — Suppr pour le retirer';
+      return;
+    }
     selInfo.textContent = n
       ? `${n} sélectionné${n > 1 ? 's' : ''}`
       : `${p.clips.length} média${p.clips.length > 1 ? 's' : ''} · ${fmtTime(store.tl.total)}`;
   }
 
+  function renderActiveTrack() {
+    clipsHead.classList.toggle('is-active', store.activeTrack === 'clips');
+    musicHead.classList.toggle('is-active', store.activeTrack === 'music');
+    cutBtn.title = store.activeTrack === 'music'
+      ? 'Couper la musique à la tête de lecture (S) — calé sur le temps, Alt pour une coupe libre'
+      : 'Couper le média à la tête de lecture (S) — Alt pour une coupe libre';
+  }
+
   function renderAll() {
     if (!store.project) return;
+    renderActiveTrack();
     content.style.width = `${contentWidth()}px`;
     renderClips();
     renderOverlays();
@@ -290,6 +326,7 @@ export function createTimeline() {
   clipsTrack.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     const el = e.target.closest('.tl-clip');
+    setActiveTrack('clips');
     if (!el) { select(null); scrub(e); return; }
     const p = store.project;
     const id = el.dataset.id;
@@ -427,20 +464,35 @@ export function createTimeline() {
   // Musique : glisser pour choisir le passage (calé sur les temps, Alt pour un réglage libre).
   musicTrack.addEventListener('pointerdown', (e) => {
     const p = store.project;
-    if (e.button !== 0 || !p.music) return;
+    if (e.button !== 0) return;
+    setActiveTrack('music');
+    if (!p.music) return;
     const start0 = p.music.start;
     const x0 = e.clientX;
     const key = `music-${Date.now()}`;
+    let dragged = false;
     musicTrack.classList.add('is-dragging');
     const move = (ev) => {
+      if (!dragged && Math.abs(ev.clientX - x0) < 4) return;
+      dragged = true;
       let s = clamp(start0 - (ev.clientX - x0) / pps, 0, Math.max(0, p.music.duration - 1));
       if (!ev.altKey) s = snapToBeat(store.project, s);
       commit((proj) => { if (proj.music.start === s) return false; proj.music.start = s; }, { key });
     };
-    const up = () => {
+    const up = (ev) => {
       musicTrack.classList.remove('is-dragging');
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      if (dragged) return;
+      // Simple clic : sélection du morceau de musique sous la souris (+ déplacement de la tête de lecture).
+      const t = pointerT(ev);
+      const seg = musicSegments(store.project).find((sg) => t >= sg.at && t < sg.at + (sg.to - sg.from));
+      if (t >= 0 && t <= store.tl.total) setTime(t);
+      if (!seg) { select(null); return; }
+      const already = store.sel.type === 'music' ? store.sel.ids : [];
+      if (ev.ctrlKey || ev.metaKey || ev.shiftKey) {
+        select('music', already.includes(seg.key) ? already.filter((k) => k !== seg.key) : [...already, seg.key]);
+      } else select('music', [seg.key]);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);

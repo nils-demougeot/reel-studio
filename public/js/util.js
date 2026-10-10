@@ -105,6 +105,7 @@ const ICONS = {
   eye: '<path d="M2.5 10s3-5 7.5-5 7.5 5 7.5 5-3 5-7.5 5-7.5-5-7.5-5z"/><circle cx="10" cy="10" r="2"/>',
   more: '<circle cx="5" cy="10" r=".8" fill="currentColor"/><circle cx="10" cy="10" r=".8" fill="currentColor"/><circle cx="15" cy="10" r=".8" fill="currentColor"/>',
   edit: '<path d="M4.5 15.5h3l8-8-3-3-8 8z"/>',
+  scissors: '<circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="14" r="2.2"/><path d="M7.8 7.3 16 14M7.8 12.7 16 6"/>',
 };
 
 export function icon(name, size = 18) {

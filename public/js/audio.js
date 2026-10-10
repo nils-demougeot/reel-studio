@@ -17,29 +17,41 @@ export async function decodeAudio(urlOrBlob) {
 export class Player {
   constructor() {
     this.buffer = null;
-    this.source = null;
+    this.sources = [];
     this.gain = null;
     this.t0 = 0;
     this.ctxStart = 0;
   }
 
-  play(t0, music) {
+  // `segments` : passages gardés de la musique (voir musicSegments), joués à la suite.
+  play(t0, music, segments = []) {
     const ac = audioContext();
     ac.resume();
     this.stop();
     this.t0 = t0;
     this.ctxStart = ac.currentTime + 0.06;
-    if (this.buffer && music) {
-      const offset = music.start + t0;
-      if (offset < this.buffer.duration) {
-        this.gain = ac.createGain();
-        this.gain.gain.value = music.volume ?? 1;
-        this.gain.connect(ac.destination);
-        this.source = ac.createBufferSource();
-        this.source.buffer = this.buffer;
-        this.source.connect(this.gain);
-        this.source.start(this.ctxStart, offset);
-      }
+    if (!this.buffer || !music) return;
+    this.gain = ac.createGain();
+    this.gain.gain.value = music.volume ?? 1;
+    this.gain.connect(ac.destination);
+    const ramp = 0.008; // micro-fondu aux raccords pour éviter les clics
+    for (const seg of segments) {
+      const len = seg.to - seg.from;
+      if (seg.at + len <= t0) continue;
+      const skip = Math.max(0, t0 - seg.at);
+      const when = this.ctxStart + Math.max(0, seg.at - t0);
+      const dur = len - skip;
+      if (seg.from + skip >= this.buffer.duration || dur <= 0) continue;
+      const src = ac.createBufferSource();
+      const g = ac.createGain();
+      src.buffer = this.buffer;
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(1, when + ramp);
+      g.gain.setValueAtTime(1, Math.max(when + ramp, when + dur - ramp));
+      g.gain.linearRampToValueAtTime(0, when + dur);
+      src.connect(g).connect(this.gain);
+      src.start(when, seg.from + skip, dur);
+      this.sources.push(src);
     }
   }
 
@@ -54,10 +66,12 @@ export class Player {
   }
 
   stop() {
-    try { this.source?.stop(); } catch { /* déjà arrêté */ }
-    this.source?.disconnect();
+    for (const s of this.sources) {
+      try { s.stop(); } catch { /* déjà arrêté */ }
+      s.disconnect();
+    }
+    this.sources = [];
     this.gain?.disconnect();
-    this.source = null;
     this.gain = null;
   }
 }

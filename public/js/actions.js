@@ -2,7 +2,9 @@
 
 import * as api from './api.js';
 import { store, commit, select, selectedClips, emit, setTime } from './store.js';
-import { newClip, newTextOverlay, newLogoOverlay, snapToBeat, beatLength } from './model.js';
+import {
+  newClip, newTextOverlay, newLogoOverlay, snapToBeat, beatLength, clipIndexAt, musicSegments, songTimeAt,
+} from './model.js';
 import { importFiles, uploadLogo } from './media.js';
 import { decodeAudio, computePeaks, detectTempo, findBestPassage, Player } from './audio.js';
 import { applyTemplate, captureTemplate } from './templates.js';
@@ -78,7 +80,7 @@ export async function setMusicFile(file) {
     music.peaks = computePeaks(buffer);
     player.buffer = buffer;
     commit((proj) => {
-      proj.music = { file: name, name: file.name, duration: buffer.duration, start: 0, volume: 1 };
+      proj.music = { file: name, name: file.name, duration: buffer.duration, start: 0, volume: 1, cuts: [], removed: [] };
       if (tempo) {
         proj.rhythm.bpm = tempo.bpm;
         proj.rhythm.offset = tempo.offset;
@@ -174,9 +176,75 @@ export function deleteSelection() {
   const { type, ids } = store.sel;
   if (!type) return;
   const set = new Set(ids);
+  if (type === 'music') { deleteMusicSegments(ids); return; }
   commit((p) => {
     if (type === 'clips') p.clips = p.clips.filter((c) => !set.has(c.id));
     else p.overlays = p.overlays.filter((o) => !set.has(o.id));
+  });
+  select(null);
+}
+
+// ---------- découpe ----------
+
+// Coupe à la tête de lecture, sur la piste active (médias ou musique).
+// `free` : coupe exacte, sans se caler sur la grille des temps.
+export function splitAtPlayhead({ free = false } = {}) {
+  if (store.activeTrack === 'music') return splitMusic(free);
+  const p = store.project;
+  const { starts } = store.tl;
+  const i = clipIndexAt(store.tl, store.time);
+  if (i < 0) return toast('Placez la tête de lecture sur un média pour le couper.');
+  const clip = p.clips[i];
+  const L = beatLength(p);
+  const exact = (store.time - starts[i]) / L;
+  // Calé sur le quart de temps le plus proche pour rester en rythme avec la musique.
+  let left = free ? exact : Math.round(exact * 4) / 4;
+  if (left <= 0 || left >= clip.beats) left = exact;
+  if (left * L < 0.04 || (clip.beats - left) * L < 0.04) return toast('Trop près du début ou de la fin du média.');
+  const right = { ...clip, id: uid('c'), beats: clip.beats - left };
+  if (p.media[clip.mediaId]?.type === 'video') right.trim = (clip.trim || 0) + left * L;
+  commit((proj) => {
+    proj.clips.find((c) => c.id === clip.id).beats = left;
+    proj.clips.splice(i + 1, 0, right);
+  });
+  select('clips', [right.id]);
+}
+
+function splitMusic(free) {
+  const p = store.project;
+  if (!p.music) return toast('Il n’y a pas de musique à couper.');
+  let song = songTimeAt(p, store.time);
+  if (song == null) return toast('La tête de lecture est après la fin de la musique.');
+  if (!free) song = snapToBeat(p, song);
+  const segs = musicSegments(p);
+  if (segs.some((s) => Math.abs(s.from - song) < 0.05 || Math.abs(s.to - song) < 0.05)) return toast('Il y a déjà une coupe à cet endroit.');
+  if (!segs.some((s) => song > s.from && song < s.to)) return;
+  commit((proj) => { proj.music.cuts = [...proj.music.cuts, song].sort((a, b) => a - b); });
+  select('music', [song.toFixed(4)]);
+}
+
+// Supprime des passages de musique : la suite se recolle immédiatement.
+export function deleteMusicSegments(keys) {
+  const segs = musicSegments(store.project).filter((s) => keys.includes(s.key));
+  if (!segs.length) return;
+  commit((p) => {
+    const ranges = [...p.music.removed, ...segs.map((s) => ({ from: s.from, to: s.to }))].sort((a, b) => a.from - b.from);
+    const merged = [];
+    for (const r of ranges) {
+      const last = merged[merged.length - 1];
+      if (last && r.from <= last.to + 1e-3) last.to = Math.max(last.to, r.to);
+      else merged.push({ ...r });
+    }
+    p.music.removed = merged;
+  });
+  select(null);
+}
+
+export function restoreFullMusic() {
+  commit((p) => {
+    if (!p.music || (!p.music.cuts.length && !p.music.removed.length)) return false;
+    p.music.cuts = [];
+    p.music.removed = [];
   });
   select(null);
 }
@@ -348,7 +416,7 @@ export async function useLibraryMusic(item, { start = null } = {}) {
   }
   setDecoded(name, buffer);
   commit((proj) => {
-    proj.music = { file: name, name: item.name, duration: buffer.duration, start: 0, volume: item.volume ?? 1 };
+    proj.music = { file: name, name: item.name, duration: buffer.duration, start: 0, volume: item.volume ?? 1, cuts: [], removed: [] };
     proj.rhythm.bpm = bpm;
     proj.rhythm.offset = offset;
     proj.music.start = snapToBeat(proj, start ?? 0);

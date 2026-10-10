@@ -3,7 +3,7 @@
 
 import { store, on, emit, setTime, setPlaying, select, commit } from './store.js';
 import { drawFrame } from './render.js';
-import { clipIndexAt, FRAME_W, FRAME_H, FIT_MODES } from './model.js';
+import { clipIndexAt, FRAME_W, FRAME_H, FIT_MODES, musicSegments } from './model.js';
 import { PreviewSources } from './media.js';
 import { player, addText, addLogo, addColorCard, updateAllClips } from './actions.js';
 import { h, icon, clamp, fmtTime, rafThrottle } from './util.js';
@@ -17,7 +17,7 @@ export function play() {
   const p = store.project;
   if (!p?.clips.length) return;
   if (store.time >= store.tl.total - 0.02) setTime(0);
-  player.play(store.time, p.music);
+  player.play(store.time, p.music, musicSegments(p));
   sources.setPlaying(true);
   setPlaying(true);
   const loop = () => {
@@ -229,15 +229,15 @@ export function createPreview() {
   on('project', (d) => {
     const p = store.project;
     if (d?.source === 'open') sources.reset();
-    const sig = `${p.music?.file}|${p.music?.start}|${p.rhythm.bpm}`;
-    if (store.playing && sig !== audioSig) player.play(store.time, p.music);
+    const sig = `${p.music?.file}|${p.music?.start}|${p.rhythm.bpm}|${JSON.stringify(p.music?.removed)}|${JSON.stringify(p.music?.cuts)}`;
+    if (store.playing && sig !== audioSig) player.play(store.time, p.music, musicSegments(p));
     if (store.playing) player.setVolume(p.music?.volume ?? 1);
     audioSig = sig;
     renderFitSwitch();
     requestRender();
   });
   on('time', (d) => {
-    if (store.playing && !d?.fromPlayback) player.play(store.time, store.project.music);
+    if (store.playing && !d?.fromPlayback) player.play(store.time, store.project.music, musicSegments(store.project));
     requestRender();
   });
   on('select', requestRender);

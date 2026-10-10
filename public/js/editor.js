@@ -8,7 +8,7 @@ import { createInspector } from './inspector.js';
 import { openExportDialog, loadAllFonts } from './export.js';
 import {
   importInto, pickAndImport, loadProjectMusic, addMediaClip, addText, deleteSelection, duplicateSelection,
-  nudgeSelection, setBeatsForSelection, buildFromTemplate, saveAsTemplate,
+  nudgeSelection, setBeatsForSelection, buildFromTemplate, saveAsTemplate, splitAtPlayhead,
 } from './actions.js';
 import { chooseTemplate, openTemplateDialog } from './template-ui.js';
 import { filesFromDrop } from './media.js';
@@ -187,6 +187,7 @@ export async function mountEditor(container, projectId, pending) {
         break;
       }
       case 't': case 'T': addText('title'); break;
+      case 's': case 'S': splitAtPlayhead({ free: e.altKey }); break;
       case 'b': case 'B': emit('tap'); break;
       default:
         if (/^[1-5]$/.test(e.key) && store.sel.type === 'clips') setBeatsForSelection(BEAT_CHOICES[Number(e.key) - 1].beats);

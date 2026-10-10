@@ -3,7 +3,7 @@
 
 import * as api from './api.js';
 import { store, commit } from './store.js';
-import { computeTimeline, clipIndexAt, FONTS, FRAME_W, FRAME_H } from './model.js';
+import { computeTimeline, clipIndexAt, FONTS, FRAME_W, FRAME_H, musicSegments } from './model.js';
 import { drawFrame } from './render.js';
 import { ExportSources } from './media.js';
 import { pause } from './preview.js';
@@ -76,7 +76,8 @@ export function openExportDialog() {
     h('div', { class: 'field' }, h('span', {}, 'Images par seconde'), seg([{ id: 30, label: '30 i/s' }, { id: 60, label: '60 i/s (plus fluide, plus long)' }], 'fps')),
     p.music ? h('div', { class: 'field' }, h('span', {}, 'Musique'),
       seg([{ id: 'with', label: 'Incluse dans la vidéo' }, { id: 'without', label: 'Sans (à ajouter dans Instagram)' }], 'audio'),
-      h('p', { class: 'insp-hint' }, `Sans : la vidéo est muette et vous ajoutez « ${p.music.name.replace(/\.[^.]+$/, '')} » depuis la bibliothèque musicale d’Instagram, en choisissant le passage qui commence à ${fmtTime(p.music.start, false)}. C’est la façon la plus sûre de publier avec un morceau connu (droits gérés par Instagram, pas de son coupé).`)) : null,
+      h('p', { class: 'insp-hint' }, `Sans : la vidéo est muette et vous ajoutez « ${p.music.name.replace(/\.[^.]+$/, '')} » depuis la bibliothèque musicale d’Instagram, en choisissant le passage qui commence à ${fmtTime(p.music.start, false)}. C’est la façon la plus sûre de publier avec un morceau connu (droits gérés par Instagram, pas de son coupé).`),
+      p.music.removed?.length ? h('p', { class: 'insp-hint warn' }, 'Votre musique contient des passages coupés : Instagram ne pourra pas reproduire ces coupes, gardez plutôt la musique incluse.') : null) : null,
     warnings.map((w) => h('p', { class: 'insp-hint warn' }, w)));
 
   const m = modal({
@@ -137,7 +138,10 @@ async function runExport({ quality, fps, name, audio }) {
 
     ({ exportId } = await api.startExport(p.id, {
       fps, crf, name, duration: N / fps,
-      music: p.music && audio !== 'without' ? { file: p.music.file, start: p.music.start, volume: p.music.volume ?? 1, fadeOut: p.export.fadeOut } : null,
+      music: p.music && audio !== 'without' ? {
+        file: p.music.file, start: p.music.start, volume: p.music.volume ?? 1, fadeOut: p.export.fadeOut,
+        segments: musicSegments(p).map((s) => ({ from: s.from, to: s.to })),
+      } : null,
     }));
 
     // Les images sont encodées en parallèle mais envoyées dans l'ordre, par paquets.
